@@ -84,7 +84,6 @@ namespace ypzxAudioEditor.Utility
 
         public class EmptyPlayableBehaviour : AudioEditorPlayableBehaviour
         {
-            public AudioMixerPlayable mixerPlayable;
 
             public override void PrepareFrame(Playable playable, FrameData info)
             {
