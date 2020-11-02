@@ -144,6 +144,13 @@ namespace ypzxAudioEditor.Utility
             //Debug.Log("switch change");
         }
 
+        public override bool Relate(int id)
+        {
+            if (base.Relate(id)) return true;
+            if (childrenPlayable.FindIndex(x => x.id == id) >= 0) return true;
+            return false;
+        }
+
         protected override AudioEditorPlayableBehaviour PlayableBehaviour => switchContainerScriptPlayable.GetBehaviour();
 
         protected sealed override AudioMixerPlayable MixerPlayable

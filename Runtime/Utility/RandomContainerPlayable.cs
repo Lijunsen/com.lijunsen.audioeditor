@@ -113,6 +113,12 @@ namespace ypzxAudioEditor.Utility
             randomContainerScriptPlayable.SetDone(true);
         }
 
+        public override bool Relate(int id)
+        {
+            if (base.Relate(id)) return true;
+            if (childrenPlayable.FindIndex(x => x.id == id) >= 0) return true;
+            return false;
+        }
 
         protected override AudioEditorPlayableBehaviour PlayableBehaviour => randomContainerScriptPlayable.GetBehaviour();
 

@@ -105,6 +105,12 @@ namespace ypzxAudioEditor.Utility
             sequenceContainerScriptPlayable.SetDone(true);
         }
 
+        public override bool Relate(int id)
+        {
+            if (base.Relate(id)) return true;
+            if (childrenPlayable.FindIndex(x => x.id == id) >= 0) return true;
+            return false;
+        }
 
         protected override AudioEditorPlayableBehaviour PlayableBehaviour => sequenceContainerScriptPlayable.GetBehaviour();
 
@@ -156,7 +162,7 @@ namespace ypzxAudioEditor.Utility
 
             public override void OnBehaviourPlay(Playable playable, FrameData info)
             {
-                Debug.Log("SequenceContainer OnBehaviourPlay");
+                //Debug.Log("SequenceContainer OnBehaviourPlay");
                 Init();
             }
 

@@ -28,10 +28,13 @@ namespace ypzxAudioEditor
         /// </summary>
         public static List<AudioClip> GlobalStaticClips = new List<AudioClip>();
 
-        public static event System.Action<AEEvent,GameObject> EventTriggered;
-        public static event System.Action<AEEventType?, bool, string,int,string,GameObject> EventUnitTriggered;
+        #region EventLogWindow相关
+        public static event System.Action<AEEvent, GameObject> EventTriggered;
+        public static event System.Action<AEEventType?, bool, string, int, string, GameObject> EventUnitTriggered;
         public static event System.Action<string, int, GameObject> PlayableGenerated;
-        public static event System.Action<string, int, GameObject> PlayableDestroyed; 
+        public static event System.Action<string, int, GameObject> PlayableDestroyed;
+        #endregion
+
         public static event System.Action<int, int> SwitchGroupSelectChanged;
         public static event System.Action<int, int,int> StateGroupSelectChanged;
         public static event System.Action<int> SyncGameParameter;
@@ -49,14 +52,6 @@ namespace ypzxAudioEditor
 
         void OnEnable()
         {
-            // var result = Resources.FindObjectsOfTypeAll(typeof(AudioEditorManager));
-            // if (result.Length > 1)
-            // {
-            //     Debug.Log(result.Length);
-            //     Debug.LogError("场景中已有Manager，请勿重复添加");
-            //     DestroyImmediate(this);
-            //     return;
-            // }
             if (Instance == null)
             {
                 Instance = this;
@@ -65,7 +60,7 @@ namespace ypzxAudioEditor
             {
                 if (Instance != this)
                 {
-                    Debug.LogError("场景中已有Manager，请勿重复添加");
+                    Debug.LogError("[AudioEditor]: 场景中已有Manager，请勿重复添加");
                     SafeDestroy(this);
                     return;
                 }
@@ -94,9 +89,7 @@ namespace ypzxAudioEditor
 
         private void Start()
         {
-            // Init();
-
-            //DoTransition(0, 20, 10);
+            //在编辑后unity刷新在Editor Mode下不会进入Start
         }
 
         private static void Init()
@@ -133,6 +126,11 @@ namespace ypzxAudioEditor
                     i++;
                 }
                 //  GC.Collect();
+            }
+
+            if (Instance == null)
+            {
+                Instance = this;
             }
         }
 
@@ -583,8 +581,7 @@ namespace ypzxAudioEditor
                     if (applyEvent.eventList[i].type == AEEventType.Play ||
                         applyEvent.eventList[i].type == AEEventType.Pause ||
                         applyEvent.eventList[i].type == AEEventType.Resume ||
-                        applyEvent.eventList[i].type == AEEventType.Stop ||
-                        applyEvent.eventList[i].type == AEEventType.StopAll)
+                        applyEvent.eventList[i].type == AEEventType.Stop)
                     {
                         eventType = overrideEventType;
                         isOverride = true;
@@ -603,7 +600,8 @@ namespace ypzxAudioEditor
 
                 var name = triggerTarget?.name ?? "null";
                 var id = triggerTarget?.id ?? -1;
-                EventUnitTriggered?.Invoke(eventType, isOverride, name, id, triggerTarget.GetType().ToString(), eventAttachObject);
+                var targetType = triggerTarget ==null? "null": triggerTarget.GetType().ToString();
+                EventUnitTriggered?.Invoke(eventType, isOverride, name, id, targetType, eventAttachObject);
 
                 switch (eventType)
                 {
@@ -807,7 +805,7 @@ namespace ypzxAudioEditor
 #endif
             playableGameObject.transform.parent = Instance.gameObject.transform;
             playableGameObject.transform.position = eventAttachObject.transform.position;
-            playableGameObject.hideFlags = HideFlags.DontSave;
+            playableGameObject.hideFlags = HideFlags.HideAndDontSave;
             playableGameObject.AddComponent<AudioSource>();
             return playableGameObject;
         }
@@ -1002,6 +1000,7 @@ namespace ypzxAudioEditor
                     DestroyPlayable(tempPlayableList);
                     break;
                 case AEEventType.SetSwitch:
+                    Debug.Log("未完成");
                     break;
                 case AEEventType.SetState:
                     foreach (var gameSyncsData in Data.GameSyncsData)
@@ -1337,10 +1336,7 @@ namespace ypzxAudioEditor
 
         public static AudioEditorData Data
         {
-            get
-            {
-                return audioEditorData;
-            }
+            get => audioEditorData;
             set => audioEditorData = value;
         }
 

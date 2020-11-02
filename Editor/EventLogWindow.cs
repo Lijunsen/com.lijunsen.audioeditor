@@ -12,6 +12,7 @@ namespace ypzxAudioEditor
 
     public class EventLogWindow : EditorWindow
     {
+        //private static EventLogWindow window;
         private static List<string> _eventLogList = new List<string>();
         private static string _searchString = "";
         private SearchField _searchField;
@@ -26,7 +27,6 @@ namespace ypzxAudioEditor
         public static EventLogWindow GetWindow()
         {
             var window =  (EventLogWindow)GetWindow(typeof(EventLogWindow),false,"AudioEditor EventLog");
-            window.Focus();
             return window;
         }
 
@@ -55,6 +55,7 @@ namespace ypzxAudioEditor
                 EditorGUILayout.HelpBox("场景中无法找到AudioEditorManager", MessageType.Error);
                 return;
             }
+
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("Clear", EditorStyles.toolbarButton, GUILayout.ExpandWidth(false)))
             {
@@ -66,9 +67,9 @@ namespace ypzxAudioEditor
             GUILayout.EndHorizontal();
             var rect = EditorGUILayout.GetControlRect(false, 1);
             EditorGUI.DrawRect(rect, Color.gray);
-
+            
             GUILayout.Space(EditorGUIUtility.standardVerticalSpacing);
-
+            
             List<string> tempLogList;
             if (_searchString != "")
             {
@@ -85,6 +86,7 @@ namespace ypzxAudioEditor
                 _scrollViewRect.height = (_boxHeight + EditorGUIUtility.standardVerticalSpacing * 2) * tempLogList.Count;
             }
 
+            GUI.SetNextControlName("EventLog Background Area");
             _scrollViewPosition = EditorGUILayout.GetControlRect(true,GUILayout.ExpandHeight(true));
             _scrollPosition = GUI.BeginScrollView(_scrollViewPosition,_scrollPosition,_scrollViewRect);
             GUILayout.BeginArea(_scrollViewRect);
@@ -94,20 +96,25 @@ namespace ypzxAudioEditor
                 {
                     EditorGUILayout.LabelField(tempLogList[i]);
                 }
-
+            
                 if (Event.current.type == EventType.Repaint && i ==tempLogList.Count-1)
                 {
                     _boxHeight = GUILayoutUtility.GetLastRect().height;
                 }
             }
             GUILayout.EndArea();
-
+            
             GUI.EndScrollView();
-
+            
             if (_prepareToDownPage == true)
             {
                 _scrollPosition.y = _scrollViewRect.height - _actuallyScrollViewHeight;
                 _prepareToDownPage = false;
+            }
+
+            if (_scrollViewPosition.Contains(Event.current.mousePosition) && Event.current.type == EventType.MouseDown)
+            {
+                GUI.FocusControl("EventLog Background Area");
             }
         }
 

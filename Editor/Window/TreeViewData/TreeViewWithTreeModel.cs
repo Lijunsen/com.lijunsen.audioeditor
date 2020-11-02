@@ -121,8 +121,8 @@ namespace ypzxAudioEditor.Utility
 				{
 					result.Add(new TreeViewItem<T>(current.id, kItemDepth, current.name, current));
 				}
-
-                if (search.Contains("id:"))
+				//通过id：前缀来对id进行搜索
+                if (search.Contains("id:")|| search.Contains("id："))
                 {
                     var newSearchString = search.Replace("id:", "");
 					if (int.TryParse(newSearchString, out var searchToInt))

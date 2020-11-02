@@ -14,8 +14,7 @@ namespace ypzxAudioEditor.Utility
         public AEComponentType type;
         //记录依附于gameObject中的AudioSource
         public AudioSource AS;
-
-        public bool enableState = true;
+        public bool enableState = true; 
 
         /// <summary>
         /// int=>StateGroupId, float=>currentStateVolume
@@ -23,7 +22,7 @@ namespace ypzxAudioEditor.Utility
         protected Dictionary<int, float> currentStateVolumeDictionary;
         protected Dictionary<int, float> currentStatePitchDictionary;
 
-        public PlayableGraph m_Graph;
+        protected PlayableGraph m_Graph;
         public AudioPlayableOutput playableOutput;
 
         protected abstract AudioEditorPlayableBehaviour PlayableBehaviour { get; }
@@ -124,6 +123,15 @@ namespace ypzxAudioEditor.Utility
             return MixerPlayable.GetTime();
         }
 
+        public virtual bool Relate(int id)
+        {
+            if (this.id == id)
+            {
+                return true;
+            }
+            return false;
+        }
+
         protected abstract void SetScriptPlayableSpeed(double value);
 
         protected abstract void SetScriptPlayableWeight(float newValue);
@@ -135,6 +143,8 @@ namespace ypzxAudioEditor.Utility
         public abstract void GetTheLastTimePlayState(ref double playTime, ref double durationTime);
 
         public abstract void GetAudioClips(ref List<AudioClip> clips);
+
+
 
         public static AudioMixerPlayable AddChildrenPlayableToMixer(AudioMixerPlayable mixer, List<AudioEditorPlayable> childrenPlayable)
         {
@@ -612,4 +622,5 @@ namespace ypzxAudioEditor.Utility
         StateTransitioning,
         EventFadeOut
     }
+
 }

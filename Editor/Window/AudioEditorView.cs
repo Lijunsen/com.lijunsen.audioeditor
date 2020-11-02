@@ -50,7 +50,7 @@ namespace ypzxAudioEditor
         {
             GeneralSettings, Effects, Attenuation, RTPC, States, OtherSetting
         }
-        private static readonly string[] PropertyEditorTabNames = { "General Settings", "Effects", "3D Setting", "RTPC", "States", "Other Setting" };
+        private static readonly string[] PropertyEditorTabNames = { "General Settings", "Effects", "3D Setting", "RTPC", "States", "Other Settings" };
 
         private PropertyEditorTab _propertyEditorTabIndex;
 
@@ -581,7 +581,7 @@ namespace ypzxAudioEditor
             if (transform == null)
             {
                 effectSettingObject = EditorUtility.CreateGameObjectWithHideFlags("EffectSettingObject",
-                    HideFlags.DontSave);
+                    HideFlags.HideAndDontSave);
                 effectSettingObject.transform.parent = manager.transform;
                 effectSettingObject.AddComponent<AudioSource>();
                 effectSettingObject.AddComponent<AudioReverbFilter>().reverbPreset = AudioReverbPreset.Off;
@@ -596,7 +596,7 @@ namespace ypzxAudioEditor
             if (transform == null)
             {
                 previewObject = EditorUtility.CreateGameObjectWithHideFlags("PreviewObject",
-                    HideFlags.DontSave);
+                    HideFlags.HideAndDontSave);
                 previewObject.transform.parent = manager.transform;
             }
             else
@@ -689,13 +689,13 @@ namespace ypzxAudioEditor
 
             EditorGUILayout.BeginScrollView(Vector2.zero, GUILayout.Height(CurrentHorizontalSpliterHeight));
             var rect = new Rect(0, 0, position.width - CurrentVerticalSpliterWidth - verticalSpliterRect.width, CurrentHorizontalSpliterHeight);
-            GUI.SetNextControlName("Empty Area");
+            GUI.SetNextControlName("PropertyEditorWindow Background Area");
             GUILayout.BeginArea(rect, GUI.skin.box);
             DrawPropertyEditorWindow();
             //GUILayout.Box(new GUIContent("右上方窗口"), GUI.skin.box, GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(true));
             if (rect.Contains(Event.current.mousePosition) && Event.current.type == EventType.MouseDown)
             {
-                GUI.FocusControl("Empty Area");
+                GUI.FocusControl("PropertyEditorWindow Background Area");
                 myTreeViews[data.ProjectExplorerTabIndex].EndRename();
             }
             GUILayout.EndArea();
@@ -1023,10 +1023,20 @@ namespace ypzxAudioEditor
         private void DrawSearchBarAndTreeView()
         {
             var e = Event.current;
-            data.searchString = m_SearchField.OnGUI(data.searchString);
-            myTreeViews[data.ProjectExplorerTabIndex].searchString = data.searchString;
+            var searchString = m_SearchField.OnGUI(data.searchString);
+            //data.searchString = m_SearchField.OnGUI(data.searchString);
+            myTreeViews[data.ProjectExplorerTabIndex].searchString = searchString;
             var rect = EditorGUILayout.GetControlRect(GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(true));
             myTreeViews[data.ProjectExplorerTabIndex].OnGUI(rect);
+            if (searchString != data.searchString )
+            {
+                data.searchString = searchString;
+                if(searchString == "")
+                {
+                    myTreeViews[data.ProjectExplorerTabIndex].FrameItem(data.MyTreeViewStates[data.ProjectExplorerTabIndex].lastClickedID);
+                    myTreeViews[data.ProjectExplorerTabIndex].SetFocusAndEnsureSelectedItem();
+                }
+            }
             //实现删除功能
             if (GUIUtility.keyboardControl == myTreeViews[data.ProjectExplorerTabIndex].treeViewControlID && e.type == EventType.KeyDown && e.keyCode == KeyCode.Delete)
             {
@@ -1267,6 +1277,9 @@ namespace ypzxAudioEditor
         private void DrawRandomContainerPropertyEditor(int id)
         {
             var currentSelectData = GetCurrentSelectData(id, AEComponentType.RandomContainer) as RandomContainer;
+
+            EditorGUI.BeginDisabledGroup(!myTreeModels[data.ProjectExplorerTabIndex].Find(id).enabled);
+
             DrawPropertyEditorTitleToolBar(currentSelectData);
             switch (PropertyEditorTabIndex)
             {
@@ -1325,11 +1338,14 @@ namespace ypzxAudioEditor
                 default:
                     throw new ArgumentOutOfRangeException();
             }
+            EditorGUI.EndDisabledGroup();
         }
 
         private void DrawSequenceContainerPropertyEditor(int id)
         {
             var currentSelectData = GetCurrentSelectData(id, AEComponentType.SequenceContainer) as SequenceContainer;
+
+            EditorGUI.BeginDisabledGroup(!myTreeModels[data.ProjectExplorerTabIndex].Find(id).enabled);
 
             DrawPropertyEditorTitleToolBar(currentSelectData);
             switch (PropertyEditorTabIndex)
@@ -1389,7 +1405,7 @@ namespace ypzxAudioEditor
                 default:
                     throw new ArgumentOutOfRangeException();
             }
-
+            EditorGUI.EndDisabledGroup();
 
         }
 
@@ -1398,6 +1414,9 @@ namespace ypzxAudioEditor
         private void DrawSwitchContainerPropertyEditor(int id)
         {
             var currentSelectData = GetCurrentSelectData(id, AEComponentType.SwitchContainer) as SwitchContainer;
+
+
+            EditorGUI.BeginDisabledGroup(!myTreeModels[data.ProjectExplorerTabIndex].Find(id).enabled);
 
             DrawPropertyEditorTitleToolBar(currentSelectData);
             switch (PropertyEditorTabIndex)
@@ -1531,6 +1550,7 @@ namespace ypzxAudioEditor
                 default:
                     throw new ArgumentOutOfRangeException();
             }
+            EditorGUI.EndDisabledGroup();
         }
 
         private void ShowSwitchGroupMenu(Rect rect, SwitchContainer currentSelectData)
@@ -2546,7 +2566,7 @@ namespace ypzxAudioEditor
                 EditorGUILayout.EndHorizontal();
 
                 EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.PrefixLabel(new GUIContent("Sterop Pan", "设置2D分量的偏移程度，-1为左声道，1为右声道"));
+                EditorGUILayout.PrefixLabel(new GUIContent("Stereo Pan", "设置2D分量的偏移程度，-1为左声道，1为右声道"));
                 currentSelectData.panStereo = EditorGUILayout.Slider(currentSelectData.panStereo, -1, 1);
                 EditorGUILayout.EndHorizontal();
 

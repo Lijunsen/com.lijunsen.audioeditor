@@ -11,8 +11,7 @@
   "category": "Audio",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Lijunsen/com.xsj.audioeditor.git",
-    "revision": "8261cd9f4a9ced59f9beafaa1a74cf6e40113c93"
+    "url": "https://github.com/Lijunsen/com.lijunsen.audioeditor.git"
   },
   "author": {
     "name": "lifuan",

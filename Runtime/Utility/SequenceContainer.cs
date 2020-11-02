@@ -124,6 +124,11 @@ namespace ypzxAudioEditor.Utility
                     }
                     break;
             }
+
+            foreach (var VARIABLE in tempList)
+            {
+                Debug.Log(VARIABLE);
+            }
             return tempList;
         }
         public List<int> ChildrenID { get => m_childrenID; set => m_childrenID = value; }

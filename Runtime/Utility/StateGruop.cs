@@ -86,7 +86,10 @@ namespace ypzxAudioEditor.Utility
             }
             return false;
         }
-
+        /// <summary>
+        /// 获取当前的State在序列中的序号
+        /// </summary>
+        /// <returns></returns>
         public int GetCurrentStateIndex()
         {
             return FindStateIndex(currentStateID);

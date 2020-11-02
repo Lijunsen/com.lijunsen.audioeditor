@@ -7,6 +7,8 @@ namespace ypzxAudioEditor.Utility
 {
     public class BlendContainerPlayable : AudioEditorPlayable
     {
+
+        List<AudioEditorPlayable> childrenPlayable;
         public BlendContainerPlayable(string name, int id, AEComponentType type, ref PlayableGraph graph) : base(name, id, type, ref graph)
         {
         }
@@ -42,6 +44,13 @@ namespace ypzxAudioEditor.Utility
         public override void GetAudioClips(ref List<AudioClip> clips)
         {
             throw new System.NotImplementedException();
+        }
+
+        public override bool Relate(int id)
+        {
+            if (base.Relate(id)) return true;
+            if (childrenPlayable.FindIndex(x => x.id == id) >= 0) return true;
+            return false;
         }
     }
 

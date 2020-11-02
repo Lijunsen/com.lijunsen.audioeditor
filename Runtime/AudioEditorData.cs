@@ -18,7 +18,5 @@ namespace ypzxAudioEditor
         [SerializeReference]
         public List<AEGameSyncs> GameSyncsData = new List<AEGameSyncs>();
 
-
-     
     }
 }
