@@ -1,17 +1,18 @@
-﻿using System;
+﻿using AudioEditor.Runtime;
+using AudioEditor.Runtime.Utility;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using UnityEditor;
 using UnityEngine;
-using ypzxAudioEditor.Utility;
 using PopupWindow = UnityEditor.PopupWindow;
 
-namespace ypzxAudioEditor
+namespace AudioEditor.Editor
 {
     [CustomPropertyDrawer(typeof(EventReference))]
-    public class EventReferenceDrawer : PropertyDrawer
+    internal class EventReferenceDrawer : PropertyDrawer
     {
         public override void OnGUI(Rect position, SerializedProperty property, GUIContent label)
         {
@@ -22,7 +23,7 @@ namespace ypzxAudioEditor
             }
 
             EditorGUI.BeginProperty(position, label, property);
-            var  id = property.FindPropertyRelative("targetEventID");
+            var id = property.FindPropertyRelative("targetEventId");
             position = UnityEditor.EditorGUI.PrefixLabel(position,
                  UnityEngine.GUIUtility.GetControlID(UnityEngine.FocusType.Passive), label);
             var audioEditorEventData = AudioEditorManager.GetAEComponentDataByID<AEEvent>(id.intValue);
@@ -39,7 +40,7 @@ namespace ypzxAudioEditor
             {
                 PopupWindow.Show(position, new SelectPopupWindow(WindowOpenFor.SelectEvent, (x) =>
                 {
-                    eventReference.targetEventID = x;
+                    eventReference.targetEventId = x;
 
                 }));
             }
@@ -48,7 +49,7 @@ namespace ypzxAudioEditor
         }
     }
 
-    public static class SerializedPropertyExtensions
+    internal static class SerializedPropertyExtensions
     {
         public static T GetActualObjectForSerializedProperty<T>(this SerializedProperty property, FieldInfo field, ref string label)
         {

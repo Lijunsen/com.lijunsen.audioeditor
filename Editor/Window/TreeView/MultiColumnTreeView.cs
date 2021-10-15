@@ -1,3 +1,5 @@
+using AudioEditor.Runtime;
+using AudioEditor.Runtime.Utility;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -7,19 +9,19 @@ using UnityEngine;
 using UnityEngine.Assertions;
 
 
-namespace ypzxAudioEditor.Utility
+namespace AudioEditor.Editor.Utility
 {
-    public class MultiColumnTreeView : TreeViewWithTreeModel<MyTreeElement>
+    internal class MultiColumnTreeView : TreeViewWithTreeModel<MyTreeElement>
     {
         const float kRowHeights = 20f;
         const float kToggleWidth = 18f;
         public bool showControls = true;
         public bool disableToggle = false;
         public bool disableRename = false;
-        private  List<int> DraggedItemIDs = new List<int>();
+        private List<int> DraggedItemIDs = new List<int>();
         public event Action<int, string> TreeViewItemRenameEnd;
         public event Action TreeViewItemSelectionChange;
-        public event Func<List<int>, TreeViewItem, bool> CheckDragItems; 
+        public event Func<List<int>, TreeViewItem, bool> CheckDragItems;
         public event Action<List<int>, int, int> TreeViewItemDrag;
         public event Action<List<string>, int, int> OutsideResourceDragIn;
         public event Action TreeViewNameChange;
@@ -218,7 +220,7 @@ namespace ypzxAudioEditor.Utility
                         iconRect.x += GetContentIndent(item);
                         iconRect.width = kToggleWidth;
                         if (iconRect.xMax < cellRect.xMax)
-                            GUI.DrawTexture(iconRect, IconUtility.GetIconTexture(item.data.Type), ScaleMode.ScaleToFit);
+                            GUI.DrawTexture(iconRect, IconUtility.GetIconTexture(item.data.type), ScaleMode.ScaleToFit);
                         // Default icon and label
                         args.rowRect = cellRect;
                         base.RowGUI(args);
@@ -251,8 +253,16 @@ namespace ypzxAudioEditor.Utility
                 {
                     TreeViewNameChange?.Invoke();
                     var element = treeModel.Find(args.itemID);
-                    element.name = args.newName;
-                    TreeViewItemRenameEnd?.Invoke(args.itemID,args.newName);
+                    if (treeModel.GetData().ToList()
+                        .Exists(x => x.type == AEComponentType.WorkUnit && x.name == args.newName) == false)
+                    {
+                        element.name = args.newName;
+                        TreeViewItemRenameEnd?.Invoke(args.itemID, args.newName);
+                    }
+                    else
+                    {
+                        AudioEditorDebugLog.LogWarning("已存在相同名称的WorkUnit");
+                    }
                 }
                 Reload();
             }
@@ -292,7 +302,7 @@ namespace ypzxAudioEditor.Utility
                     headerContent = new GUIContent("Name"),
                     headerTextAlignment = TextAlignment.Center,
                     canSort =  false,
-                    width = 200,
+                    width = 250,
                     minWidth = 60,
                     autoResize = true,
                     allowToggleVisibility = false
@@ -321,7 +331,7 @@ namespace ypzxAudioEditor.Utility
         protected override void SelectionChanged(IList<int> selectedIds)
         {
             base.SelectionChanged(selectedIds);
-           // Debug.Log("SelectionChanged");
+            // Debug.Log("SelectionChanged");
             TreeViewItemSelectionChange?.Invoke();
             Event.current.Use();
         }
@@ -342,18 +352,18 @@ namespace ypzxAudioEditor.Utility
             DoubleSelectedItem?.Invoke();
             base.DoubleClickedItem(id);
         }
-        
+
 
         protected override bool CanBeParent(TreeViewItem item)
         {
             var element = item as TreeViewItem<MyTreeElement>;
-            if (element.data.Type == AEComponentType.SoundSFX
-                || element.data.Type == AEComponentType.Event
-                || element.data.Type == AEComponentType.SwitchGroup
-                || element.data.Type == AEComponentType.StateGroup
-                || element.data.Type == AEComponentType.GameParameter
-                || element.data.Type == AEComponentType.Switch
-                || element.data.Type == AEComponentType.State)
+            if (element.data.type == AEComponentType.SoundSFX
+                || element.data.type == AEComponentType.Event
+                || element.data.type == AEComponentType.SwitchGroup
+                || element.data.type == AEComponentType.StateGroup
+                || element.data.type == AEComponentType.GameParameter
+                || element.data.type == AEComponentType.Switch
+                || element.data.type == AEComponentType.State)
             {
                 return false;
             }
@@ -363,7 +373,7 @@ namespace ypzxAudioEditor.Utility
         protected override bool CanStartDrag(CanStartDragArgs args)
         {
             var data = (args.draggedItem as TreeViewItem<MyTreeElement>).data;
-            if (data.Type == AEComponentType.Switch || data.Type == AEComponentType.State)
+            if (data.type == AEComponentType.Switch || data.type == AEComponentType.State)
             {
                 return false;
             }
@@ -428,7 +438,7 @@ namespace ypzxAudioEditor.Utility
 
             if (args.performDrop)
             {
-              //  Debug.Log("拖入的数量为："+resourcePaths.Count);
+                //  Debug.Log("拖入的数量为："+resourcePaths.Count);
                 OutsideResourceDragIn?.Invoke(resourcePaths, args.parentItem?.id ?? rootItem.id, args.insertAtIndex);
                 //DragAndDrop.AcceptDrag();
             }

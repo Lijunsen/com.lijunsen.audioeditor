@@ -1,44 +1,43 @@
-﻿using System;
-using System.Collections;
-using System.Collections.Generic;
+﻿using AudioEditor.Runtime;
 using UnityEditor;
 using UnityEngine;
-namespace ypzxAudioEditor.Utility
+
+namespace AudioEditor.Editor.Utility
 {
-    public class ExportAudioEvent:Editor
+    internal class ExportAudioEvent : UnityEditor.Editor
     {
-        private static string ExportStr = "";
+        private static string exportStr = "";
         //private static string ExportFilePath = "";
 
-       // [MenuItem("Window/Audio Editor/导出EventList",false,13)]
+        // [MenuItem("Window/Audio Editor/导出EventList",false,13)]
         private static void ExportAudioEventList()
         {
-            ExportStr = "";
+            exportStr = "";
             var data = AssetDatabase.LoadAssetAtPath(
-                "Assets/AudioEditor/Data/Resources/AuioEditorDataAsset.asset",typeof(AudioEditorData)) as AudioEditorData;
+                "Assets/AudioEditor/Data/Resources/AuioEditorDataAsset.asset", typeof(AudioEditorData)) as AudioEditorData;
             if (data == null)
             {
                 Debug.LogError("无法找到Asset Data");
                 return;
             }
 
-            foreach (var aeEvent in data.EventData)
+            foreach (var aeEvent in data.eventData)
             {
-                ExportStr += aeEvent.name;
-                ExportStr += "\n";
+                exportStr += aeEvent.name;
+                exportStr += "\n";
             }
 
-            ExportStr += "\n";
-            ExportStr += "\n";
+            exportStr += "\n";
+            exportStr += "\n";
 
-            foreach (var aeEvent in data.EventData)
+            foreach (var aeEvent in data.eventData)
             {
-                ExportStr += aeEvent.id;
-                ExportStr += "\n";
+                exportStr += aeEvent.id;
+                exportStr += "\n";
             }
 
-            System.IO.File.WriteAllText(Application.dataPath + @"\AudioEditor\Export\EventList.txt", ExportStr);
-            ExportStr = "";
+            System.IO.File.WriteAllText(Application.dataPath + @"\AudioEditor\Export\EventList.txt", exportStr);
+            exportStr = "";
             Debug.Log("导出完成");
         }
     }

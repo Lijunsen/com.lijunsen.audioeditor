@@ -1,22 +1,19 @@
-﻿using System;
-using System.Collections;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
-using UnityEngine.Audio;
 
 
-namespace ypzxAudioEditor.Utility
+namespace AudioEditor.Runtime.Utility
 {
     [System.Serializable]
-    public class RandomContainer : AEAudioComponent, AEContainer
+    internal class RandomContainer : AEAudioComponent, IAEContainer
     {
-        public RandomContainerPlayType playType = RandomContainerPlayType.Standard;
-        public int shufflePtr = 0;
+        //public int shufflePtr = 0;
         [SerializeField]
-        private List<int> m_childrenID;
+        private List<int> childrenID;
         [SerializeField]
-        private ContainerPlayMode m_playMode = ContainerPlayMode.Step;
+        private ContainerPlayMode playMode;
+        public RandomContainerPlayType playType;
         /// <summary>
         /// 保存每次Shuffle乱序后的ChildrenIDList，用于下次Shuffle
         /// </summary>
@@ -27,17 +24,23 @@ namespace ypzxAudioEditor.Utility
         public float crossFadeTime = 0;
         public CrossFadeType crossFadeType = CrossFadeType.Linear;
 
-        public RandomContainer(string name, int id, AEComponentType type):base(name,id,type)
+        public List<int> ChildrenID { get => childrenID; set => childrenID = value; }
+
+        public ContainerPlayMode PlayMode { get => playMode; set => playMode = value; }
+
+        public RandomContainer(string name, int id, AEComponentType type) : base(name, id, type)
         {
-            m_childrenID = new List<int>();
+            childrenID = new List<int>();
             shuffledID = new List<int>();
+            playMode = ContainerPlayMode.Step;
+            playType = RandomContainerPlayType.Standard;
         }
 
         public override void Init()
         {
-            shufflePtr = m_childrenID.Count;
+            //shufflePtr = _childrenID.Count;
             shuffledID = new List<int>();
-          //  shuffledID.AddRange(ChildrenID);
+            //  shuffledID.AddRange(ChildrenID);
         }
 
         /// <summary>
@@ -45,18 +48,25 @@ namespace ypzxAudioEditor.Utility
         /// </summary>
         public List<int> GetRandomContainerChildrenIDList(List<int> preChildrenIdList)
         {
-            if (m_childrenID.Count == 0)
+            if (childrenID.Count == 0)
             {
-                return m_childrenID;
+                return childrenID;
+            }
+
+            if (shuffledID == null)
+            {
+                AudioEditorDebugLog.LogError("发生未知错误");
+                shuffledID = new List<int>();
             }
 
             if (shuffledID.Count != ChildrenID.Count)
             {
                 shuffledID.Clear();
-                shufflePtr = m_childrenID.Count;
+                //shufflePtr = _childrenID.Count;
             }
 
-            System.Random random = new System.Random(System.DateTime.Now.Second);
+            //System.Random random = new System.Random(DateTime.Now.Second);
+            System.Random random = new System.Random();
             List<int> tempList = new List<int>();
 
             switch (playType)
@@ -66,10 +76,10 @@ namespace ypzxAudioEditor.Utility
                     {
                         case ContainerPlayMode.Step:
                             var randomNumber = random.Next(ChildrenID.Count);
-                            tempList.Add(m_childrenID[randomNumber]);
+                            tempList.Add(childrenID[randomNumber]);
                             break;
                         case ContainerPlayMode.Continuous:
-                            foreach (var item in m_childrenID)
+                            foreach (var item in childrenID)
                             {
                                 //random.Next return the value of (>=0 && <maxValue);
                                 tempList.Insert(random.Next(tempList.Count + 1), item);
@@ -200,15 +210,6 @@ namespace ypzxAudioEditor.Utility
             }
             return tempList;
         }
-
-        public List<int> ChildrenID { get => m_childrenID; set => m_childrenID = value; }
-
-        public ContainerPlayMode PlayMode { get => m_playMode; set => m_playMode=value; }
     }
 
-    public enum CrossFadeType
-    {
-        Linear,
-        Delay
-    }
 }

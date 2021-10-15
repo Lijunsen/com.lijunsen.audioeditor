@@ -1,23 +1,21 @@
 ﻿using System;
-using System.Collections;
-using System.Collections.Generic;
 using UnityEngine;
 
-namespace ypzxAudioEditor.Utility
+namespace AudioEditor.Runtime.Utility
 {
-    public enum AEEffectType
+    internal enum AEEffectType
     {
         LowPassFilter,
         HighPassFilter,
         ReverbFilter,
-        ReverbZoneFilter,
+        //ReverbZoneFilter,
         EchoFilter,
         ChorusFilter,
         DistortionFilter
     }
 
     [Serializable]
-    public abstract class AEEffect 
+    internal abstract class AEEffect
     {
         public AEEffectType type;
 
@@ -25,19 +23,30 @@ namespace ypzxAudioEditor.Utility
         /// <summary>
         /// 将数据同步至一个AudioReverbFilter
         /// </summary>
-        /// <param name="ARF"></param>
         public abstract void SyncDataToFilter<T>(T filter) where T : Behaviour;
 
         public abstract void Reset();
     }
 
     [Serializable]
-    public class AELowPassFilter : AEEffect
+    internal class AELowPassFilter : AEEffect
     {
         [SerializeField]
-        private float _cutoffFrequency = 5000;
+        private float cutoffFrequency = 5000;
         [SerializeField]
-        private float _lowpassResonanceQ = 1;
+        private float lowpassResonanceQ = 1;
+
+        public float CutoffFrequency
+        {
+            get => cutoffFrequency;
+            set => cutoffFrequency = Mathf.Clamp(value, 10, 22000);
+        }
+
+        public float LowPassResonanceQ
+        {
+            get => lowpassResonanceQ;
+            set => lowpassResonanceQ = Mathf.Clamp(value, 1, 10);
+        }
 
         public AELowPassFilter()
         {
@@ -59,28 +68,27 @@ namespace ypzxAudioEditor.Utility
             CutoffFrequency = 5000;
             LowPassResonanceQ = 1;
         }
-
-        public float CutoffFrequency
-        {
-            get => _cutoffFrequency;
-            set => _cutoffFrequency = Mathf.Clamp(value, 10, 22000);
-        }
-
-        public float LowPassResonanceQ
-        {
-            get => _lowpassResonanceQ;
-            set => _lowpassResonanceQ = Mathf.Clamp(value, 1, 10);
-        }
-
     }
 
     [Serializable]
-    public class AEHighPassFilter : AEEffect
+    internal class AEHighPassFilter : AEEffect
     {
         [SerializeField]
-        private float _cutoffFrequency = 5000;
+        private float cutoffFrequency = 5000;
         [SerializeField]
-        private float _highpassResonanceQ = 1;
+        private float highpassResonanceQ = 1;
+
+        public float CutoffFrequency
+        {
+            get => cutoffFrequency;
+            set => cutoffFrequency = Mathf.Clamp(value, 10, 22000);
+        }
+
+        public float HighPassResonanceQ
+        {
+            get => highpassResonanceQ;
+            set => highpassResonanceQ = Mathf.Clamp(value, 1, 10);
+        }
 
         public AEHighPassFilter()
         {
@@ -102,23 +110,10 @@ namespace ypzxAudioEditor.Utility
             CutoffFrequency = 5000;
             HighPassResonanceQ = 1;
         }
-
-
-        public float CutoffFrequency
-        {
-            get => _cutoffFrequency;
-            set => _cutoffFrequency = Mathf.Clamp(value, 10, 22000);
-        }
-
-        public float HighPassResonanceQ
-        {
-            get => _highpassResonanceQ;
-            set => _highpassResonanceQ = Mathf.Clamp(value, 1, 10);
-        }
     }
 
     [Serializable]
-    public class AEReverbFilter : AEEffect
+    internal class AEReverbFilter : AEEffect
     {
         public AudioReverbPreset preset;
         public float dryLevel;
@@ -211,101 +206,101 @@ namespace ypzxAudioEditor.Utility
         }
     }
 
+    //[Serializable]
+    //internal class AEReverbZone : AEEffect
+    //{
+    //    public float minDistance;
+    //    public float maxDistance;
+
+    //    public AudioReverbPreset preset;
+    //    public int room;
+    //    public int roomHF;
+    //    public int roomLF;
+    //    public float decayTime;
+    //    public float decayHFRatio;
+    //    public int reflections;
+    //    public float reflectionsDelay;
+    //    public int reverb;
+    //    public float reverbDelay;
+    //    public float hfReference;
+    //    public float lfReference;
+    //    public float diffusion;
+    //    public float density;
+
+    //    public AEReverbZone()
+    //    {
+    //        type = AEEffectType.ReverbZoneFilter;
+    //        Reset();
+    //    }
+
+    //    public void SetData(AudioReverbZone ARZ)
+    //    {
+    //        minDistance = ARZ.minDistance;
+    //        maxDistance = ARZ.maxDistance;
+    //        preset = ARZ.reverbPreset;
+    //        room = ARZ.room;
+    //        roomHF = ARZ.roomHF;
+    //        roomLF = ARZ.roomLF;
+    //        decayTime = ARZ.decayTime;
+    //        decayHFRatio = ARZ.decayHFRatio;
+    //        reflections = ARZ.reflections;
+    //        reflectionsDelay = ARZ.reflectionsDelay;
+    //        reverb = ARZ.reverb;
+    //        reverbDelay = ARZ.reverbDelay;
+    //        hfReference = ARZ.HFReference;
+    //        lfReference = ARZ.LFReference;
+    //        diffusion = ARZ.diffusion;
+    //        density = ARZ.density;
+    //    }
+
+    //    public override void SyncDataToFilter<T>(T filter)
+    //    {
+    //        if (filter is AudioReverbZone ARZ)
+    //        {
+    //            ARZ.minDistance = minDistance;
+    //            ARZ.minDistance = minDistance;
+    //            ARZ.maxDistance = maxDistance;
+    //            ARZ.reverbPreset = preset;
+    //            ARZ.room = room;
+    //            ARZ.roomHF = roomHF;
+    //            ARZ.roomLF = roomLF;
+    //            ARZ.decayTime = decayTime;
+    //            ARZ.decayHFRatio = decayHFRatio;
+    //            ARZ.reflections = reflections;
+    //            ARZ.reflectionsDelay = reflectionsDelay;
+    //            ARZ.reverb = reverb;
+    //            ARZ.reverbDelay = reverbDelay;
+    //            ARZ.HFReference = hfReference;
+    //            ARZ.LFReference = lfReference;
+    //            ARZ.diffusion = diffusion;
+    //            ARZ.density = density;
+    //        }
+    //    }
+
+    //    public sealed override void Reset()
+    //    {
+    //        minDistance = 10;
+    //        maxDistance = 15;
+
+    //        preset = AudioReverbPreset.Generic;
+    //        room = -1000;
+    //        roomHF = -100;
+    //        roomLF = 0;
+    //        decayTime = 1.49f;
+    //        decayHFRatio = 0.83f;
+    //        reflections = -2602;
+    //        reflectionsDelay = 0.007f;
+    //        reverb = 200;
+    //        reverbDelay = 0.011f;
+    //        hfReference = 5000;
+    //        lfReference = 250;
+    //        diffusion = 100;
+    //        density = 100;
+    //    }
+    //}
+
     [Serializable]
-    public class AEReverbZone : AEEffect
-    {
-        public float minDistance;
-        public float maxDistance;
-
-        public AudioReverbPreset preset;
-        public int room;
-        public int roomHF;
-        public int roomLF;
-        public float decayTime;
-        public float decayHFRatio;
-        public int reflections;
-        public float reflectionsDelay;
-        public int reverb;
-        public float reverbDelay;
-        public float hfReference;
-        public float lfReference;
-        public float diffusion;
-        public float density;
-
-        public AEReverbZone()
-        {
-            type = AEEffectType.ReverbZoneFilter;
-            Reset();
-        }
-
-        public void SetData(AudioReverbZone ARZ)
-        {
-            minDistance = ARZ.minDistance;
-            maxDistance = ARZ.maxDistance;
-            preset = ARZ.reverbPreset;
-            room = ARZ.room;
-            roomHF = ARZ.roomHF;
-            roomLF = ARZ.roomLF;
-            decayTime = ARZ.decayTime;
-            decayHFRatio = ARZ.decayHFRatio;
-            reflections = ARZ.reflections;
-            reflectionsDelay = ARZ.reflectionsDelay;
-            reverb = ARZ.reverb;
-            reverbDelay = ARZ.reverbDelay;
-            hfReference = ARZ.HFReference;
-            lfReference = ARZ.LFReference;
-            diffusion = ARZ.diffusion;
-            density = ARZ.density;
-        }
-
-        public override void SyncDataToFilter<T>(T filter)
-        {
-            if (filter is AudioReverbZone ARZ)
-            {
-                ARZ.minDistance = minDistance;
-                ARZ.minDistance = minDistance;
-                ARZ.maxDistance = maxDistance;
-                ARZ.reverbPreset = preset;
-                ARZ.room = room;
-                ARZ.roomHF = roomHF;
-                ARZ.roomLF = roomLF;
-                ARZ.decayTime = decayTime;
-                ARZ.decayHFRatio = decayHFRatio;
-                ARZ.reflections = reflections;
-                ARZ.reflectionsDelay = reflectionsDelay;
-                ARZ.reverb = reverb;
-                ARZ.reverbDelay = reverbDelay;
-                ARZ.HFReference = hfReference;
-                ARZ.LFReference = lfReference;
-                ARZ.diffusion = diffusion;
-                ARZ.density = density;
-            }
-        }
-
-        public sealed override void Reset()
-        {
-            minDistance = 10;
-            maxDistance = 15;
-
-            preset = AudioReverbPreset.Generic;
-            room = -1000;
-            roomHF = -100;
-            roomLF = 0;
-            decayTime = 1.49f;
-            decayHFRatio = 0.83f;
-            reflections = -2602;
-            reflectionsDelay = 0.007f;
-            reverb = 200;
-            reverbDelay = 0.011f;
-            hfReference = 5000;
-            lfReference = 250;
-            diffusion = 100;
-            density = 100;
-        }
-    }
-
-    [Serializable]
-    public class AEEchoFilter : AEEffect
+    internal class AEEchoFilter : AEEffect
     {
         public int delay;
         public float decayRatio;
@@ -339,7 +334,7 @@ namespace ypzxAudioEditor.Utility
     }
 
     [Serializable]
-    public class AEChorusFilter : AEEffect
+    internal class AEChorusFilter : AEEffect
     {
         public float dryMix;
         public float wetMix1;
@@ -383,7 +378,7 @@ namespace ypzxAudioEditor.Utility
 
 
     [Serializable]
-    public class AEDistortionFilter : AEEffect
+    internal class AEDistortionFilter : AEEffect
     {
         public float distortionLevel;
 

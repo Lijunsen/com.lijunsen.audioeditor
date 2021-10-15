@@ -1,14 +1,13 @@
-﻿using System;
-using System.Collections;
-using System.Collections.Generic;
+﻿using AudioEditor.Runtime;
+using AudioEditor.Runtime.Utility;
+using System;
 using UnityEditor;
 using UnityEngine;
-using ypzxAudioEditor.Utility;
 
-namespace ypzxAudioEditor
+namespace AudioEditor.Editor
 {
     [CustomEditor(typeof(EventTrigger))]
-    public class EventTriggerInspector : Editor
+    internal class EventTriggerInspector : UnityEditor.Editor
     {
         private EventTrigger trigger;
 
@@ -31,7 +30,7 @@ namespace ypzxAudioEditor
             {
                 var color = GUI.color;
                 GUI.color = Color.red;
-                EditorGUILayout.HelpBox("场景中无法找到AudioEditorManager",MessageType.Error);
+                EditorGUILayout.HelpBox("场景中无法找到AudioEditorManager", MessageType.Error);
                 GUI.color = color;
                 return;
             }
@@ -46,9 +45,11 @@ namespace ypzxAudioEditor
                 if (newMask != trigger.triggerTypes)
                 {
                     trigger.triggerTypes = newMask;
-                    //  Debug.Log(Convert.ToString(newMask, 2));
+                    //Debug.Log(Convert.ToString(newMask, 2));
                 }
-                if ((newMask & 1 << (int)MyEventTriggerType.TriggerEnter) == 0B10)
+
+                //与相应枚举位按位与后为1
+                if ((newMask & (int)MyEventTriggerType.TriggerEnter) != 0 || (newMask & (int)MyEventTriggerType.TriggerExit) != 0)
                 {
                     var color = GUI.color;
                     if (trigger.colliderTarget == null)
@@ -63,7 +64,7 @@ namespace ypzxAudioEditor
                     {
                         trigger.colliderTarget = newObject;
                     }
-                    if (newObject!=null &&( !newObject.GetComponent<Collider>() || !newObject.GetComponent<Rigidbody>()))
+                    if (newObject != null && (!newObject.GetComponent<Collider>() || !newObject.GetComponent<Rigidbody>()))
                     {
                         GUI.color = Color.red;
                         EditorGUILayout.LabelField("检测到目标无Rigidbody和Collider", GUI.skin.box, GUILayout.ExpandWidth(true));
@@ -95,29 +96,41 @@ namespace ypzxAudioEditor
             using (new EditorGUILayout.VerticalScope("box", GUILayout.ExpandWidth(true)))
             {
                 var buttonRect = EditorGUI.PrefixLabel(EditorGUILayout.GetControlRect(), new GUIContent("Event: "));
-                var selectedEvent = AudioEditorManager.GetAEComponentDataByID<AEEvent>(trigger.targetEventID);
-                trigger.eventName = selectedEvent == null ? "null" : selectedEvent.name;
-                if (EditorGUI.DropdownButton(buttonRect, new GUIContent(trigger.eventName), FocusType.Passive))
+                if (AudioEditorManager.Data != null)
                 {
-                    PopupWindow.Show(buttonRect, new SelectPopupWindow(WindowOpenFor.SelectEvent, (selectedID) =>
+                    var selectedEvent = AudioEditorManager.GetAEComponentDataByID<AEEvent>(trigger.targetEventID);
+                    trigger.eventName = selectedEvent == null ? "null" : selectedEvent.name;
+                    if (EditorGUI.DropdownButton(buttonRect, new GUIContent(trigger.eventName), FocusType.Passive))
                     {
-                        Undo.RecordObject(trigger, "AudioEditorTriggerChange");
-                        trigger.targetEventID = selectedID;
-                    }));
+                        PopupWindow.Show(buttonRect, new SelectPopupWindow(WindowOpenFor.SelectEvent, (selectedID) =>
+                        {
+                            Undo.RecordObject(trigger, "AudioEditorTriggerChange");
+                            trigger.targetEventID = selectedID;
+                        }));
+                    }
+                }
+                else
+                {
+                    EditorGUILayout.HelpBox("配置文件未加载", MessageType.Warning);
                 }
             }
 
             using (new EditorGUILayout.VerticalScope("box", GUILayout.ExpandWidth(true)))
             {
-                if (GUILayout.Button(new GUIContent("事件触发")))
+                if (GUILayout.Button(new GUIContent("触发事件")))
                 {
                     trigger.PostEvent();
+                }
+
+                if (GUILayout.Button(new GUIContent("结束事件")))
+                {
+                    trigger.PostEvent(AEEventType.Stop);
                 }
             }
 
             if (EditorGUI.EndChangeCheck())
             {
-               // Debug.Log("Undo Trigger");
+                // Debug.Log("Undo Trigger");
                 Undo.RecordObject(trigger, "AudioEditorTriggerChange");
             }
         }

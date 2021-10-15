@@ -1,18 +1,19 @@
-﻿using System;
-using System.Collections;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using UnityEngine;
 
-namespace ypzxAudioEditor.Utility
+namespace AudioEditor.Runtime.Utility
 {
     [System.Serializable]
-    public class StateGruop : AEGameSyncs
+    internal class StateGruop : AEGameSyncs
     {
         public float defaultTransitionTime = 1f;
         public int currentStateID = -1;
         [SerializeField]
         private List<State> stateList;
         public List<StateTransition> customStateTransitionList;
+
+        public int StateListCount => stateList.Count;
+
         public StateGruop(string name, int id) : base(name, id)
         {
             stateList = new List<State>();
@@ -29,11 +30,11 @@ namespace ypzxAudioEditor.Utility
             else
             {
                 currentStateID = -1;
-                Debug.LogWarning("[AudioEditor]: 检测到StateGroup没有State子类，请检查，id: "+this.id);
+                Debug.LogWarning("[AudioEditor]: 检测到StateGroup没有State子类，请检查，id: " + this.id);
             }
         }
 
-        public State GenerateState(string name, int id,bool isNone)
+        public State GenerateState(string name, int id, bool isNone)
         {
             var newState = new State(name, id, isNone);
             stateList.Add(newState);
@@ -49,12 +50,12 @@ namespace ypzxAudioEditor.Utility
         //     return newState;
         // }
 
-        public State FindState(int stateID)
+        public State GetState(int stateID)
         {
             return stateList.Find(x => x.id == stateID);
         }
 
-        public int FindStateIndex(int stateID)
+        public int GetStateIndex(int stateID)
         {
             return stateList.FindIndex(x => x.id == stateID);
         }
@@ -66,7 +67,7 @@ namespace ypzxAudioEditor.Utility
 
         public bool RemoveState(int stateID)
         {
-            var state = FindState(stateID);
+            var state = GetState(stateID);
             if (state != null)
             {
                 //删除过渡项中State相关的项
@@ -92,7 +93,7 @@ namespace ypzxAudioEditor.Utility
         /// <returns></returns>
         public int GetCurrentStateIndex()
         {
-            return FindStateIndex(currentStateID);
+            return GetStateIndex(currentStateID);
         }
 
         // public bool RemoveStateAt(int i)
@@ -108,16 +109,16 @@ namespace ypzxAudioEditor.Utility
 
         public bool ContainsState(int id)
         {
-            if (FindState(id) == null)
+            if (GetState(id) == null)
             {
                 return false;
             }
             return true;
         }
 
-        public void GenerateTransition(int sourceId,int destinationId)
+        public void GenerateTransition(int sourceId, int destinationId)
         {
-            var sourceState = stateList.Find(x=>x.id ==sourceId);
+            var sourceState = stateList.Find(x => x.id == sourceId);
             var destinationState = stateList.Find(x => x.id == destinationId);
             foreach (var stateTransition in customStateTransitionList)
             {
@@ -126,7 +127,7 @@ namespace ypzxAudioEditor.Utility
                     return;
                 }
             }
-            customStateTransitionList.Add(new StateTransition(sourceState,destinationState,defaultTransitionTime));
+            customStateTransitionList.Add(new StateTransition(sourceState, destinationState, defaultTransitionTime));
         }
 
         public StateTransition GetTransition(int sourceId, int destinationId)
@@ -141,7 +142,7 @@ namespace ypzxAudioEditor.Utility
             return null;
         }
 
-        public void GenerateTransition(State sourceState,State destinationState)
+        public void GenerateTransition(State sourceState, State destinationState)
         {
             foreach (var stateTransition in customStateTransitionList)
             {
@@ -164,23 +165,21 @@ namespace ypzxAudioEditor.Utility
         //     }
         //
         // }
-
-        public int StateListCount => stateList.Count;
     }
 
     [System.Serializable]
-    public class State : AEGameSyncs
+    internal class State : AEGameSyncs
     {
-        [SerializeField] private bool _isNone = false;
+        [SerializeField] private bool isNone = false;
+
+        public bool IsNone => isNone;
         // private float volume = 1;
         // private float pitch = 1;
 
-        public State(string name, int id,bool isNone) : base(name, id)
+        public State(string name, int id, bool isNone) : base(name, id)
         {
-            this._isNone = isNone;
+            this.isNone = isNone;
         }
-
-        public bool IsNone => _isNone;
 
         // public State(string name, int id, float v, float p) : base(name, id)
         // {
@@ -190,7 +189,7 @@ namespace ypzxAudioEditor.Utility
     }
 
     [System.Serializable]
-    public class StateTransition
+    internal class StateTransition
     {
         public int sourceStateID;
         public int destinationStateID;
@@ -206,7 +205,7 @@ namespace ypzxAudioEditor.Utility
         }
 
 
-        public bool Equal(State from,State to)
+        public bool Equal(State from, State to)
         {
             if (sourceStateID == from.id && destinationStateID == to.id)
             {

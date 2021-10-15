@@ -1,34 +1,31 @@
-﻿using System;
-using System.Collections;
-using System.Collections.Generic;
-using System.Globalization;
-using System.Reflection;
+﻿using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
-using ypzxAudioEditor.Utility;
 
-namespace ypzxAudioEditor
+namespace AudioEditor.Editor
 {
-    public static class GraphCurveRendering
+    internal static class GraphCurveRendering
     {
         //      private static float GraphPadding = 5f;
-        private static float FontHeight = 16f;
-        private static float FontWith = 28f;
-        //public static Material LineMat;
-        private static GUIStyle MyStyle;
-        private static readonly float[] AxisScale = { 0.1f, 0.25f, 0.5f };
-        private static readonly int MaxSubdivisionsAxis = 10;
+        private const float FontHeight = 16f;
 
-        private static readonly Color BackgroundColor = new Color(0.19215f, 0.19215f, 0.19215f);
+        private const float FontWith = 28f;
+
+        //public static Material LineMat;
+        private static GUIStyle myStyle;
+        private static readonly float[] axisScale = { 0.1f, 0.25f, 0.5f };
+        private static readonly int maxSubdivisionsAxis = 10;
+
+        private static readonly Color backgroundColor = new Color(0.19215f, 0.19215f, 0.19215f);
         private static void Initialize()
         {
             AudioEditorView.DestroyWindow -= OnDestroy;
             AudioEditorView.DestroyWindow += OnDestroy;
 
-            MyStyle = new GUIStyle();
-            MyStyle.normal.textColor = Color.white;
-            MyStyle.alignment = TextAnchor.LowerCenter;
-            MyStyle.stretchWidth = true;
+            myStyle = new GUIStyle();
+            myStyle.normal.textColor = Color.white;
+            myStyle.alignment = TextAnchor.LowerCenter;
+            myStyle.stretchWidth = true;
             // MyStyle.margin = new RectOffset(0, 0, 5, 5);
 
             // if (LineMat == null)
@@ -41,30 +38,56 @@ namespace ypzxAudioEditor
             // LineMat = field.GetValue(null) as Material;
         }
 
-        public static void Draw(Rect rect, List<AnimationCurve> animationCurve, float? xAxisMin = null, float? xAxisMax = null, float? yAxisMin = null, float? yAxisMax = null)
+        /// <summary>
+        /// 绘制一个与animationCurve相关的坐标轴图表
+        /// </summary>
+        /// <param name="rect">控件的位置</param>
+        /// <param name="animationCurve">需要绘制的animationCurve</param>
+        /// <param name="xAxisMin">x轴最小值</param>
+        /// <param name="xAxisMax">x轴最大值</param>
+        /// <param name="yAxisMin">y轴最小值</param>
+        /// <param name="yAxisMax">y轴最大值</param>
+        /// <returns>在控件中具体图表的Rect</returns>
+        public static Rect Draw(Rect rect, List<AnimationCurve> animationCurve, float? xAxisMin = null, float? xAxisMax = null, float? yAxisMin = null, float? yAxisMax = null, float? xAxisValue = null)
         {
-            EditorGUI.DrawRect(rect, BackgroundColor);
-            if (MyStyle == null) Initialize();
+            EditorGUI.DrawRect(rect, backgroundColor);
+            if (myStyle == null) Initialize();
             // if (LineMat == null) Initialize();
             var dataRect = new Rect(FontWith, FontHeight - 1, rect.width - FontWith * 2, rect.height - FontHeight * 2);
             GUI.BeginGroup(rect);
             DrawGraphData(dataRect, animationCurve);
             DrawCoordinateSystem(rect, dataRect, xAxisMin, xAxisMax, yAxisMin, yAxisMax);
+            DrawXAxisValueRect(dataRect, xAxisMin, xAxisMax, xAxisValue);
             GUI.EndGroup();
+
+            return new Rect(rect.x + dataRect.x, rect.y + dataRect.y, dataRect.width, dataRect.height);
         }
 
-        public static void Draw(Rect rect, AnimationCurve animationCurve, Color curveColor, float? xAxisMin = null, float? xAxisMax = null, float? yAxisMin = null, float? yAxisMax = null)
+        /// <summary>
+        /// 绘制一个与animationCurve相关的坐标轴图表
+        /// </summary>
+        /// <param name="rect">控件的位置</param>
+        /// <param name="animationCurve">需要绘制的animationCurve</param>
+        /// <param name="curveColor">对应animationCurve的颜色</param>
+        /// <param name="xAxisMin">x轴最小值</param>
+        /// <param name="xAxisMax">x轴最大值</param>
+        /// <param name="yAxisMin">y轴最小值</param>
+        /// <param name="yAxisMax">y轴最大值</param>
+        /// <returns>在控件中具体图表的Rect</returns>
+        public static Rect Draw(Rect rect, AnimationCurve animationCurve, Color curveColor, float? xAxisMin = null, float? xAxisMax = null, float? yAxisMin = null, float? yAxisMax = null, float? xAxisValue = null)
         {
-            EditorGUI.DrawRect(rect, BackgroundColor);
-            if (MyStyle == null) Initialize();
+            EditorGUI.DrawRect(rect, backgroundColor);
+            if (myStyle == null) Initialize();
             // if (LineMat == null) Initialize();
             var dataRect = new Rect(FontWith, FontHeight - 1, rect.width - FontWith * 2, rect.height - FontHeight * 2);
             GUI.BeginGroup(rect);
             DrawGraphData(dataRect, animationCurve, curveColor);
             DrawCoordinateSystem(rect, dataRect, xAxisMin, xAxisMax, yAxisMin, yAxisMax);
+            DrawXAxisValueRect(dataRect, xAxisMin, xAxisMax, xAxisValue);
             GUI.EndGroup();
-        }
 
+            return new Rect(rect.x + dataRect.x, rect.y + dataRect.y, dataRect.width, dataRect.height);
+        }
 
         /// <summary>
         /// 绘制坐标轴
@@ -72,6 +95,9 @@ namespace ypzxAudioEditor
         /// <param name="rect"></param>
         /// <param name="xAxisMin"></param>
         /// <param name="xAxisMax"></param>
+        /// <param name="yAxisMin"></param>
+        /// <param name="yAxisMax"></param>
+        /// <param name="xAxisValue"></param>
         private static void DrawCoordinateSystem(Rect rect, Rect graphDataRect, float? xAxisMin, float? xAxisMax, float? yAxisMin, float? yAxisMax)
         {
             Vector3 zeroPoint = new Vector3(FontWith, rect.height - FontHeight);
@@ -111,14 +137,14 @@ namespace ypzxAudioEditor
                 int step = 0;
                 for (int i = 0; i < 10; i++)
                 {
-                    var result = xDvalue / (AxisScale[step] * figures);
-                    if (result <= MaxSubdivisionsAxis)
+                    var result = xDvalue / (axisScale[step] * figures);
+                    if (result <= maxSubdivisionsAxis)
                     {
                         subdivisionsAxisNumber = Mathf.FloorToInt(result);
                         break;
                     }
                     step++;
-                    if (step == AxisScale.Length)
+                    if (step == axisScale.Length)
                     {
                         step = 0;
                         figures *= 10;
@@ -130,14 +156,14 @@ namespace ypzxAudioEditor
                     //如果与端点值太近则不绘制
                     if (i == subdivisionsAxisNumber - 1)
                     {
-                        if (Mathf.Abs((float)(xAxisMin + AxisScale[step] * figures * (i + 1) - xAxisMax)) < 0.5)
+                        if (Mathf.Abs((float)(xAxisMin + axisScale[step] * figures * (i + 1) - xAxisMax)) < 0.5)
                         {
                             break;
                         }
                     }
                     var point = zeroPoint;
-                    point.x += graphDataRect.width * (AxisScale[step] * figures * (i + 1) / xDvalue);
-                    var valueLabel = (float)xAxisMin + AxisScale[step] * figures * (i + 1);
+                    point.x += graphDataRect.width * (axisScale[step] * figures * (i + 1) / xDvalue);
+                    var valueLabel = (float)xAxisMin + axisScale[step] * figures * (i + 1);
                     DrawCalibration(graphDataRect, false, point, valueLabel.ToString("G5"));
                 }
             }
@@ -146,6 +172,8 @@ namespace ypzxAudioEditor
             DrawCalibration(graphDataRect, true, zeroPoint, label);
             label = yAxisMax == null ? "" : ((float)yAxisMax).ToString("G");
             DrawCalibration(graphDataRect, true, upperPoint, label);
+
+            //TODO 如果坐标太过密集应该选择隔位显示
             //绘制y轴中间的端点
             if (yAxisMin != null && yAxisMax != null)
             {
@@ -157,14 +185,14 @@ namespace ypzxAudioEditor
                 int step = 0;
                 for (int i = 0; i < 10; i++)
                 {
-                    var result = yDvalue / (AxisScale[step] * figures);
-                    if (result <= MaxSubdivisionsAxis)
+                    var result = yDvalue / (axisScale[step] * figures);
+                    if (result <= maxSubdivisionsAxis)
                     {
                         subdivisionsAxisNumber = Mathf.FloorToInt(result);
                         break;
                     }
                     step++;
-                    if (step == AxisScale.Length)
+                    if (step == axisScale.Length)
                     {
                         step = 0;
                         figures *= 10;
@@ -175,14 +203,14 @@ namespace ypzxAudioEditor
                 {
                     if (i == subdivisionsAxisNumber - 1)
                     {
-                        if (Mathf.Abs((float)(yAxisMin + AxisScale[step] * figures * (i + 1) - yAxisMax)) < 0.5)
+                        if (Mathf.Abs((float)(yAxisMin + axisScale[step] * figures * (i + 1) - yAxisMax)) < 0.5)
                         {
                             break;
                         }
                     }
                     var point = zeroPoint;
-                    point.y -= graphDataRect.height * (AxisScale[step] * figures * (i + 1) / yDvalue);
-                    var valueLabel = (float)yAxisMin + AxisScale[step] * figures * (i + 1);
+                    point.y -= graphDataRect.height * (axisScale[step] * figures * (i + 1) / yDvalue);
+                    var valueLabel = (float)yAxisMin + axisScale[step] * figures * (i + 1);
                     var labelStyle = "G";
                     switch (step)
                     {
@@ -238,9 +266,9 @@ namespace ypzxAudioEditor
                 Handles.DrawLine(startPoint, rightPoint);
 
                 var labelRect = new Rect(point.x - FontWith - 3, point.y - FontHeight / 2, FontWith, FontHeight);
-                MyStyle.alignment = TextAnchor.MiddleRight;
-                MyStyle.fontSize = 11;
-                EditorGUI.LabelField(labelRect, label, MyStyle);
+                myStyle.alignment = TextAnchor.MiddleRight;
+                myStyle.fontSize = 11;
+                EditorGUI.LabelField(labelRect, label, myStyle);
             }
             else
             {
@@ -272,16 +300,16 @@ namespace ypzxAudioEditor
                 Handles.color = new Color(1, 1, 1, 0.2f);
                 Handles.DrawLine(startPoint, upPoint);
 
-                MyStyle.alignment = TextAnchor.LowerCenter;
-                MyStyle.fontSize = 0;
+                myStyle.alignment = TextAnchor.LowerCenter;
+                myStyle.fontSize = 0;
                 var labelRect = new Rect(point.x - FontWith / 2, point.y, FontWith, FontHeight);
-                EditorGUI.LabelField(labelRect, label, MyStyle);
+                EditorGUI.LabelField(labelRect, label, myStyle);
             }
 
         }
 
         /// <summary>
-        /// 绘制曲线
+        /// 绘制多个曲线
         /// </summary>
         /// <param name="rect"></param>
         /// <param name="animationCurve"></param>
@@ -311,11 +339,16 @@ namespace ypzxAudioEditor
                         var value = Mathf.Clamp01(curveData.Evaluate(f));
                         var normalizedValue = (value - 0.5f) / 0.5f;
                         return normalizedValue * 0.99f;
-                    }), AudioEditorView.ColorRankList[i]);
+                    }), AudioEditorView.colorRankList[i]);
             }
             AudioCurveRendering.EndCurveFrame();
         }
-
+        /// <summary>
+        /// 绘制单个曲线
+        /// </summary>
+        /// <param name="rect"></param>
+        /// <param name="animationCurve"></param>
+        /// <param name="color"></param>
         private static void DrawGraphData(Rect rect, AnimationCurve animationCurve, Color color)
         {
             AudioCurveRendering.BeginCurveFrame(rect);
@@ -334,10 +367,29 @@ namespace ypzxAudioEditor
             AudioCurveRendering.EndCurveFrame();
         }
 
+        /// <summary>
+        /// 绘制X轴当前值的坐标显示
+        /// </summary>
+        private static void DrawXAxisValueRect(Rect graphRect, float? xMin, float? xMax, float? xAxisValue)
+        {
+            if (xMin != null && xMax != null && xAxisValue != null)
+            {
+                var xAxisValueRect = graphRect;
+                var rectCenterValue = (float)(graphRect.x + graphRect.width * ((xAxisValue - xMin) / (xMax - xMin)));
+                xAxisValueRect.xMin = rectCenterValue - 1;
+                xAxisValueRect.xMax = rectCenterValue + 1;
+
+                var preColor = GUI.color;
+                GUI.color = Color.yellow;
+                GUI.DrawTexture(xAxisValueRect, EditorGUIUtility.whiteTexture);
+                GUI.color = preColor;
+            }
+        }
+
         private static void OnDestroy()
         {
             //LineMat = null;
-            MyStyle = null;
+            myStyle = null;
             AudioEditorView.DestroyWindow -= OnDestroy;
         }
     }

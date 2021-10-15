@@ -1,11 +1,11 @@
-﻿using System.Collections;
-using System.Collections.Generic;
+﻿using System;
 using UnityEngine;
 
 
-namespace ypzxAudioEditor
+namespace AudioEditor.Runtime
 {
-    public class PreviewMode : MonoBehaviour
+    [Obsolete]
+    internal class PreviewMode : MonoBehaviour
     {
         public AudioSource AS;
 

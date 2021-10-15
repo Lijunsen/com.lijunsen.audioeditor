@@ -1,19 +1,19 @@
-﻿using System;
-using System.Collections;
-using System.Collections.Generic;
+﻿using AudioEditor.Runtime.Utility;
+using System;
 using UnityEngine;
-using UnityEngine.Serialization;
 
-namespace ypzxAudioEditor
+namespace AudioEditor.Runtime
 {
-    public enum MyEventTriggerType
+    [Flags]
+    internal enum MyEventTriggerType
     {
-        Start,
-        TriggerEnter,
-        TriggerExit,
-        Disable,
-        Destroy
+        Start = 0b00001,
+        TriggerEnter = 0b00010,
+        TriggerExit = 0b00100,
+        Disable = 0b01000,
+        Destroy = 0b10000
     }
+
     [Serializable]
     [AddComponentMenu("AudioEditor/EventTrigger")]
     public class EventTrigger : MonoBehaviour
@@ -25,43 +25,24 @@ namespace ypzxAudioEditor
         [SerializeField, HideInInspector]
         public int triggerTypes;
 
-       // [FormerlySerializedAs("targetEventIDaa")]
-        [SerializeField,HideInInspector]
+        [SerializeField, HideInInspector]
         public int targetEventID = -1;
 
-        [SerializeField,HideInInspector]
+        [SerializeField, HideInInspector]
         public string eventName = "null";
-
-        // public EventTrigger(int i)
-        // {
-        //     targetEventID = i;
-        // }
-
-        // Start is called before the first frame update
-        void Awake()
-        {
-            //if (!gameObject.GetComponent<AudioSource>())
-            //{
-            //    gameObject.AddComponent<AudioSource>();
-            //}
-        }
+        
 
         void Start()
         {
             CheckTrigger(MyEventTriggerType.Start);
         }
-
-        // Update is called once per frame
-        void Update()
-        {
-            
-        }
+        
         private void OnTriggerEnter(Collider other)
         {
 
             if (other.gameObject == colliderTarget)
             {
-               // Debug.Log("Collider Enter");
+                // Debug.Log("Collider Enter");
                 CheckTrigger(MyEventTriggerType.TriggerEnter);
             }
         }
@@ -94,34 +75,48 @@ namespace ypzxAudioEditor
         {
             CheckTrigger(MyEventTriggerType.Destroy);
         }
-        
+
         /// <summary>
         /// 检测触发类型
         /// </summary>
         /// <param name="type"></param>
         private void CheckTrigger(MyEventTriggerType type)
         {
-            for (int i = 0; i < Enum.GetNames(typeof(MyEventTriggerType)).Length; i++)
+            //for (int i = 0; i < Enum.GetNames(typeof(MyEventTriggerType)).Length; i++)
+            //{
+            //    //将选项掩码与当前选项进行按位与，提取出对应位的数值
+            //    var triggerOption = triggerTypes & (1 << i);
+            //    //Debug.Log(Convert.ToString( triggerOption,2));
+            //    if (triggerOption.Equals(1 << i) && i == (int)type)
+            //    {
+            //        //对应位的数值为1且i为要检测的类型则触发
+            //        PostEvent();
+            //        break;
+            //    }
+            //}
+
+            if ((triggerTypes & (int)type) != 0)
             {
-                var triggerOption = triggerTypes &(1 << i);
-             //   Debug.Log(Convert.ToString( triggerOption,2));
-                if (triggerOption.Equals(1 << i) && i == (int) type)
-                {
-                    PostEvent();
-                    break;
-                }
+                PostEvent();
             }
         }
 
         public void PostEvent()
+        {
+            PostEvent(null);
+        }
+
+
+        internal void PostEvent(AEEventType? overrideEventType)
         {
             if (AudioEditorManager.FindManager() == null)
             {
                 Debug.LogError("[AudioEditor]:无法获取AudioEditorManager");
                 return;
             }
-            AudioEditorManager.ApplyEvent(this.gameObject, targetEventID);
+            AudioEditorManager.ApplyEvent(this.gameObject, targetEventID, overrideEventType);
         }
 
+        
     }
 }

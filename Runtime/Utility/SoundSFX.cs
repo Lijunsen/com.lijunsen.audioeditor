@@ -1,19 +1,15 @@
-﻿using System;
-using System.Collections;
-using System.Collections.Generic;
-using UnityEngine;
-using UnityEngine.Audio;
+﻿using UnityEngine;
 
-namespace ypzxAudioEditor.Utility
+namespace AudioEditor.Runtime.Utility
 {
-    public enum FadeType
-    {
-        Linear,
-        Sin,
-    }
+    // public enum FadeType
+    // {
+    //     Linear,
+    //     Sin,
+    // }
 
     [System.Serializable]
-    public class SoundSFX: AEAudioComponent
+    internal class SoundSFX : AEAudioComponent
     {
         public AudioClip clip;
         public string clipGUID;
@@ -23,11 +19,11 @@ namespace ypzxAudioEditor.Utility
         // public GameObject gameObject;
 
         // public bool isplaying;
-        
-        public SoundSFX(string name,int id,AEComponentType type) : base(name, id, type)
+
+        public SoundSFX(string name, int id, AEComponentType type) : base(name, id, type)
         {
             clipGUID = "";
-            clipAssetPath =  "";
+            clipAssetPath = "";
         }
 
     }

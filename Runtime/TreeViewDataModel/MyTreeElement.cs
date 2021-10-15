@@ -1,21 +1,20 @@
 using System;
 using System.Collections.Generic;
-using UnityEngine;
+using UnityEngine.Serialization;
 
 
-
-namespace ypzxAudioEditor.Utility
+namespace AudioEditor.Runtime.Utility
 {
     [Serializable]
-    public class MyTreeElement : TreeElement
+    internal class MyTreeElement : TreeElement
     {
-        public AEComponentType Type = AEComponentType.Workunit;
-        //TODO 取消勾选时，父级为SwitchContainer的话其OutputList没有进行检测
+        [FormerlySerializedAs("Type")]
+        public AEComponentType type;
         public bool enabled = true;
 
-        public MyTreeElement (string name, int depth, int id, AEComponentType type = AEComponentType.Workunit) : base (name, depth, id)
+        public MyTreeElement(string name, int depth, int id, AEComponentType type = AEComponentType.WorkUnit) : base(name, depth, id)
         {
-            Type = type;
+            this.type = type;
         }
 
         public void GetAllChildrenIDByDeepSearch(ref HashSet<int> IDSet)

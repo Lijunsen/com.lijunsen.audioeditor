@@ -1,12 +1,8 @@
-﻿using System.Collections;
-using System.Collections.Generic;
-using UnityEngine;
-
-namespace ypzxAudioEditor
+﻿namespace AudioEditor.Runtime
 {
     public enum AEComponentType
     {
-        Workunit = 0,
+        WorkUnit = 0,
         SoundSFX,
         RandomContainer,
         SequenceContainer,
@@ -18,6 +14,7 @@ namespace ypzxAudioEditor
         StateGroup,
         State,
         GameParameter,
-        Empty
+        Empty,
+        ActorMixer
     }
 }

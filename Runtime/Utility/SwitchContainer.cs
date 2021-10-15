@@ -1,29 +1,36 @@
-﻿using System;
-using System.Collections;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using UnityEngine;
 
-namespace ypzxAudioEditor.Utility
+namespace AudioEditor.Runtime.Utility
 {
     [System.Serializable]
-    public class SwitchContainer : AEAudioComponent, AEContainer
+    internal class SwitchContainer : AEAudioComponent, IAEContainer
     {
         [SerializeField]
-        private ContainerPlayMode m_playMode = ContainerPlayMode.Step;
+        private ContainerPlayMode playMode = ContainerPlayMode.Step;
         [SerializeField]
-        private List<int> m_childrenID;
+        private List<int> childrenID;
         public int switchGroupID = -1;
         public int defualtPlayIndex;
         //<switchID,ChildID>
         public List<int> outputIDList;
+
+        public bool crossFade = false;
+        public float crossFadeTime = 0;
+        public CrossFadeType crossFadeType = CrossFadeType.Linear;
+
+        public List<int> ChildrenID { get => childrenID; set => childrenID = value; }
+        public ContainerPlayMode PlayMode { get => playMode; set => playMode = value; }
+
         public SwitchContainer(string name, int id, AEComponentType type) : base(name, id, type)
         {
-            m_childrenID = new List<int>();
+            childrenID = new List<int>();
             outputIDList = new List<int>();
         }
 
-        public List<int> GetSwitchContainerChildrenIDList()
+        public List<int> GetSwitchContainerOutputIDList()
         {
+            //SwitchContainer实例仅生成在GroupSetting中设置的子类
             return outputIDList;
         }
 
@@ -44,9 +51,6 @@ namespace ypzxAudioEditor.Utility
                 }
             }
         }
-
-        public List<int> ChildrenID { get => m_childrenID; set => m_childrenID = value; }
-        public ContainerPlayMode PlayMode { get => m_playMode; set => m_playMode = value; }
     }
 
 }

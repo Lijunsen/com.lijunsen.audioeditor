@@ -1,17 +1,18 @@
-﻿using System;
-using System.Collections;
+﻿using AudioEditor.Editor.Utility;
+using AudioEditor.Runtime;
+using AudioEditor.Runtime.Utility;
+using System;
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.IMGUI.Controls;
 using UnityEngine;
-using ypzxAudioEditor.Utility;
 
-namespace ypzxAudioEditor
+namespace AudioEditor.Editor
 {
 
-    public class SelectPopupWindow : PopupWindowContent
+    internal class SelectPopupWindow : PopupWindowContent
     {
-        private EditorViewData data;
+        private AudioEditorData data;
         private WindowOpenFor windowOpenForWhat;
 
         private MultiColumnHeaderState multiColumnHeaderState;
@@ -30,7 +31,8 @@ namespace ypzxAudioEditor
         {
             CallBackFunction = callback;
             windowOpenForWhat = whatTypeOpenToDo;
-            data = AssetDatabase.LoadAssetAtPath(AudioEditorView.EditorWindowDataPath, typeof(EditorViewData)) as EditorViewData;
+            //data = AssetDatabase.LoadAssetAtPath(AudioEditorManager.DataPath, typeof(AudioEditorData)) as AudioEditorData;
+            data = AudioEditorManager.Data;
         }
 
         public override Vector2 GetWindowSize()
@@ -101,7 +103,7 @@ namespace ypzxAudioEditor
                     default:
                         throw new ArgumentOutOfRangeException();
                 }
-                
+
                 treeView = new MultiColumnTreeView(treeViewState, myMultiColumnHeader, treeModel);
 
                 searchField = new SearchField();
@@ -138,7 +140,7 @@ namespace ypzxAudioEditor
                     if (AudioEditorManager.GetAEComponentDataByID<State>(treeViewState.lastClickedID) != null) return true;
                     break;
                 case WindowOpenFor.SelectGameParameter:
-                    Debug.LogError("未完成");
+                    if (AudioEditorManager.GetAEComponentDataByID<GameParameter>(treeViewState.lastClickedID) != null) return true;
                     break;
                 case WindowOpenFor.SelectSwichGroup:
                     if (AudioEditorManager.GetAEComponentDataByID<SwitchGroup>(treeViewState.lastClickedID) != null) return true;
@@ -174,7 +176,7 @@ namespace ypzxAudioEditor
 
     }
 
-    public enum WindowOpenFor
+    internal enum WindowOpenFor
     {
         SelectAudio,
         SelectEvent,

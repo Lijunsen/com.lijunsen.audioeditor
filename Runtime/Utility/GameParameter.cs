@@ -1,12 +1,9 @@
-﻿using System.Collections;
-using System.Collections.Generic;
-using UnityEngine;
-using ypzxAudioEditor.Utility;
+﻿using UnityEngine;
 
-namespace ypzxAudioEditor
+namespace AudioEditor.Runtime.Utility
 {
     [System.Serializable]
-    public class GameParameter:AEGameSyncs
+    internal class GameParameter : AEGameSyncs
     {
         [SerializeField]
         private float minValue;
@@ -17,21 +14,6 @@ namespace ypzxAudioEditor
         [SerializeField]
         private float value;
 
-        
-        public GameParameter(string name, int id) : base(name, id)
-        {
-            minValue = 0;
-            maxValue = 100;
-            value = defaultValue =  50;
-
-        }
-
-        public override void Init()
-        {
-            base.Init();
-            //Value = DefaultValue;
-        }
-
         public float MinValue
         {
             get => minValue;
@@ -39,7 +21,7 @@ namespace ypzxAudioEditor
             {
                 if (value > maxValue)
                 {
-                    minValue = maxValue-Mathf.Pow(10,Mathf.FloorToInt(Mathf.Log10(maxValue))-1);
+                    minValue = maxValue - Mathf.Pow(10, Mathf.FloorToInt(Mathf.Log10(maxValue)) - 1);
                     return;
                 }
                 minValue = value;
@@ -47,6 +29,8 @@ namespace ypzxAudioEditor
                 {
                     defaultValue = minValue;
                 }
+
+                this.Value = this.value;
             }
         }
 
@@ -65,6 +49,8 @@ namespace ypzxAudioEditor
                 {
                     defaultValue = maxValue;
                 }
+
+                this.Value = this.value;
             }
         }
 
@@ -73,11 +59,25 @@ namespace ypzxAudioEditor
             get => defaultValue;
             set => defaultValue = Mathf.Clamp(value, minValue, maxValue);
         }
-        public float Value { get =>value; set=>this.value = Mathf.Clamp(value,minValue,maxValue); }
+        public float Value { get => value; set => this.value = Mathf.Clamp(value, minValue, maxValue); }
 
         /// <summary>
         /// 归一化的值
         /// </summary>
         public float ValueAtNormalized => (value - MinValue) / (MaxValue - MinValue);
+
+        public GameParameter(string name, int id) : base(name, id)
+        {
+            minValue = 0;
+            maxValue = 100;
+            value = defaultValue = 50;
+
+        }
+
+        public override void Init()
+        {
+            base.Init();
+            Value = DefaultValue;
+        }
     }
 }

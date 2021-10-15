@@ -1,31 +1,36 @@
-﻿using System.Collections;
-using System.Collections.Generic;
-using UnityEngine;
+﻿using System.Collections.Generic;
 
-namespace ypzxAudioEditor.Utility
+namespace AudioEditor.Runtime.Utility
 {
-    public enum RandomContainerPlayType
+    internal enum RandomContainerPlayType
     {
         Standard,
         Shuffle
     }
-    public enum ContainerPlayMode
+
+    internal enum ContainerPlayMode
     {
         Step,
         Continuous
     }
 
-    public enum SequenceContainerPlayType
+    internal enum SequenceContainerPlayType
     {
         Restart,
         ReverseOrder
     }
-    public interface AEContainer
-{
+
+    internal enum CrossFadeType
+    {
+        Linear,
+        Delay
+    }
+
+    internal interface IAEContainer
+    {
         ContainerPlayMode PlayMode { get; set; }
         List<int> ChildrenID { get; set; }
 
-        //TODO: cantainer的CrossFade功能
-}
-    
+    }
+
 }

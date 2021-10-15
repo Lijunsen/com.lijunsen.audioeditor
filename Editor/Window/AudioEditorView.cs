@@ -1,21 +1,27 @@
-﻿using System;
+﻿using AudioEditor.Editor.Utility;
+using AudioEditor.Runtime;
+using AudioEditor.Runtime.Utility;
+using AudioEditor.Runtime.Utility.EasingCore;
+using System;
 using System.Collections.Generic;
-using System.IO;
+using System.Linq;
 using UnityEditor;
 using UnityEditor.IMGUI.Controls;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.Audio;
-using ypzxAudioEditor.Utility;
+using UnityEngine.Playables;
+using UnityEngine.SceneManagement;
+using Object = UnityEngine.Object;
 
-namespace ypzxAudioEditor
+namespace AudioEditor.Editor
 {
-    public class AudioEditorView : EditorWindow
+    internal class AudioEditorView : EditorWindow
     {
         #region 参数设置
         //用于读写asset文件中的数据
         [SerializeField]
-        private static EditorViewData data;
-        public static readonly string EditorWindowDataPath = "Assets/AudioEditor/Data/AudioEditorWindowDataAsset.asset";
+        private static EditorViewData editorViewData;
         /// <summary>
         /// 用于从特效组件中获取预设数据
         /// </summary>
@@ -31,86 +37,208 @@ namespace ypzxAudioEditor
         private Rect horizontalSpliterRect;
         private Rect verticalSpliterRect;
 
-        //左上窗口(ProjectExplorer)的参数设置
-        private enum ProjectExplorerTab
-        {
-            Audio, Events, GameSyncs, Banks
-        }
-        private static readonly string[] projectExplorerTabNames = Enum.GetNames(typeof(ProjectExplorerTab));
+        #region 左上窗口(ProjectExplorer)的参数设置
+
+        //private enum ProjectExplorerTab
+        //{
+        //    Audio, Events, GameSyncs
+        //}
+
+        private static readonly string[] projectExplorerTabNames = Enum.GetNames(typeof(AudioEditorDataType));
 
         //列表树的参数设置
-        private SearchField m_SearchField;
-        private MultiColumnTreeView[] myTreeViews = new MultiColumnTreeView[4];
-        private MultiColumnHeaderState m_MultiColumnHeaderState;
+        private SearchField mSearchField;
+        private MultiColumnTreeView[] myTreeViews = new MultiColumnTreeView[MyTreeLists.TreeListCount];
+        private MultiColumnHeaderState mMultiColumnHeaderState;
         [SerializeField]
-        private TreeModel<MyTreeElement>[] myTreeModels = new TreeModel<MyTreeElement>[4];
+        private TreeModel<MyTreeElement>[] myTreeModels = new TreeModel<MyTreeElement>[MyTreeLists.TreeListCount];
+        #endregion
 
-        //右上窗口（PropertyEditor）的参数设置
+        #region 右上窗口（PropertyEditor）的参数设置
         private enum PropertyEditorTab
         {
             GeneralSettings, Effects, Attenuation, RTPC, States, OtherSetting
         }
-        private static readonly string[] PropertyEditorTabNames = { "General Settings", "Effects", "3D Setting", "RTPC", "States", "Other Settings" };
 
-        private PropertyEditorTab _propertyEditorTabIndex;
+        private static readonly string[] propertyEditorTabNames = { "General Settings", "Effects", "3D Setting", "RTPC", "States", "Other Settings" };
 
-        private PropertyEditorTab PropertyEditorTabIndex
-        {
-            get => _propertyEditorTabIndex;
-            set
-            {
-                _propertyEditorTabIndex = value;
-                //右边窗口标签刷新时候重置页面参数
-                FoldoutHeaderFlags = new List<bool>();
-                ScorllViewPosition = Vector2.zero;
-            }
-        }
+        private PropertyEditorTab propertyEditorTabIndex;
 
-        private static readonly string[] EventTpyeNames = Enum.GetNames(typeof(AEEventType));
+        private static readonly string[] eventTypeNames = Enum.GetNames(typeof(AEEventType));
 
         //记录Header的展开状态，每次选择新的列表树中的内容后刷新
-        private static List<bool> FoldoutHeaderFlags = new List<bool>();
-        private static Vector2 ScorllViewPosition = Vector2.zero;
+        private List<bool> foldoutHeaderFlags = new List<bool>();
+        private Vector2 scorllViewPosition = Vector2.zero;
 
         private int whichEventUnitSelect = 0;
 
         private int whichRTPCSelect = 0;
 
-        //右下窗口(PreviewEditor)的参数设置
+        //BlendContainer的UI参数
+        private bool leftAnchorRectDragInBlendContainerGraph = false;
+        private bool rightAnchorRectDragInBlendContainerGraph = false;
+        /// <summary>
+        /// 储存所有BlendTrack中ChildBlendInfo的深度信息，数值越小优先级越高，越先接受鼠标事件，数值为-1则表示被选中
+        /// </summary>
+        private List<List<int>> blendContainerTracksDepthInfoList = new List<List<int>>();
+
+        #endregion
+
+        #region 右下窗口(PreviewEditor)的参数设置
+
+        private readonly float[] outputVolumeData = new float[4096];
         public enum PreviewModeState
         {
-            playing,
+            Playing,
             Paused,
             Stoped
         }
-        private readonly string[] previewWindowGridButtonName = { "states", "RTPCs", "Switches", "Triggers" };
+        private readonly string[] previewWindowGridButtonName = { "States", "RTPCs", "Switches", "Triggers" };
         private int previewWindowGridSelected = 0;
 
         public PreviewModeState previewState = PreviewModeState.Stoped;
+        #endregion
 
         //其他设置
         private AudioEditorManager manager;
         private static AudioEditorView window;
-        private GUISkin BoldLabelStyleSkin;
-        private static Color backgroundBoxColor = Color.Lerp(Color.white, Color.black, 0.1f);
+        private GUIStyle whiteLableStyleSkin;
+        private static readonly Color backgroundBoxColor = Color.Lerp(Color.white, Color.black, 0.1f);
+        private static readonly Color rectSelectedColorInLightTheme = new Color(0, 0, 1, 0.2f);
         private static Color preGUIColor = Color.white;
-        private static Color rectSelectedColor = new Color(0, 0, 1, 0.2f);
+        //TODO 应增加越界检测
+        public static readonly Color[] colorRankList =
+        {
+            Color.red,
+            Color.blue,
+            Color.green,
+            Color.cyan,
+            Color.magenta,
+            Color.yellow,
+            new Color(65 / 255f, 105 / 255f, 225 / 255f),
+            new Color(0, 191 / 255f, 1),
+            new Color(0, 1, 1),
+        };
+        //获取和储存在EditorPrefs中数据的Key
+        /// <summary>
+        /// 指示第一次打开窗口的标志位，用于设置初始化窗口大小等，数据类型为bool
+        /// </summary>
+        private const string FirstInitKey = "XSJ.YPZS.AudioEditor.FirstInit";
+
 
         //委托
         public static event System.Action DestroyWindow;
         #endregion
 
-        [MenuItem("Window/Audio Editor/EditorManager",false,1)]
+        private static Color RectSelectedColor
+        {
+            get
+            {
+                if (EditorGUIUtility.isProSkin)
+                {
+                    return Color.black;
+                }
+                else
+                {
+                    return rectSelectedColorInLightTheme;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 水平分隔栏的位置
+        /// </summary>
+        private static float CurrentHorizontalSpliterHeight
+        {
+            get
+            {
+                if (editorViewData == null)
+                {
+                    AudioEditorDebugLog.LogError("editorViewData未加载");
+                    return 0;
+                }
+
+                return editorViewData.currentHorizontalSpliterHeight;
+            }
+            set
+            {
+                if (value < 60)
+                {
+                    value = 50;
+                }
+
+                if (value > window.position.height - 60)
+                {
+                    value = window.position.height - 50;
+                }
+                editorViewData.currentHorizontalSpliterHeight = value;
+            }
+        }
+
+        /// <summary>
+        /// 竖直分隔栏的位置
+        /// </summary>
+        private static float CurrentVerticalSpliterWidth
+        {
+            get
+            {
+                if (editorViewData == null)
+                {
+                    AudioEditorDebugLog.LogError("editorViewData未加载");
+                    return 0;
+                }
+                return editorViewData.currentVerticalSpliterWidth;
+            }
+            set
+            {
+                if (value < 60)
+                {
+                    value = 50;
+                }
+
+                if (value > window.position.width - 60)
+                {
+                    value = window.position.width - 50;
+                }
+                editorViewData.currentVerticalSpliterWidth = value;
+            }
+        }
+
+        private PropertyEditorTab PropertyEditorTabIndex
+        {
+            get => propertyEditorTabIndex;
+            set
+            {
+                propertyEditorTabIndex = value;
+                //右边窗口标签刷新时候在此重置页面参数
+                foldoutHeaderFlags = new List<bool>();
+                scorllViewPosition = Vector2.zero;
+            }
+        }
+
+        private AudioEditorData ManagerData
+        {
+            get => AudioEditorManager.Data;
+            set => AudioEditorManager.Data = value;
+        }
+
+        [MenuItem("Window/Audio Editor/EditorManager", false, 1)]
         public static AudioEditorView GetWindow()
         {
             window = (AudioEditorView)EditorWindow.GetWindow(typeof(AudioEditorView), true, "Audio Editor Manager");
-            if (EditorPrefs.HasKey("XSJ.YPZS.AudioEditor.FirstInit") == false || EditorPrefs.GetBool("XSJ.YPZS.AudioEditor.FirstInit") == false)
+            if (EditorPrefs.HasKey(FirstInitKey) == false || EditorPrefs.GetBool(FirstInitKey) == false)
             {
+                AudioEditorDebugLog.Log("First Init");
                 window.position = new Rect(300, 200, 1050, 650);
-                EditorPrefs.SetBool("XSJ.YPZS.AudioEditor.FirstInit", true);
+                EditorPrefs.SetBool(FirstInitKey, true);
             }
             window.autoRepaintOnSceneChange = true;
             return window;
+        }
+
+        void Awake()
+        {
+
         }
 
         void OnEnable()
@@ -120,64 +248,93 @@ namespace ypzxAudioEditor
 
         private void Init()
         {
-            var loadEditorViewDataSuccess = false;
-            var loadEditorManagerDataSuccess = false;
+            if (window == null) window = this;
 
             manager = AudioEditorManager.FindManager();
-            if (manager != null)
-            {
-                if (ManagerData == null)
-                {
-                    AudioEditorManager.LoadDataAsset();
-                }
-                if (ManagerData != null)
-                {
-                    loadEditorManagerDataSuccess = true;
-                }
-            }
-            else
+            if (manager == null)
             {
                 return;
             }
 
-            data = AssetDatabase.LoadAssetAtPath(EditorWindowDataPath, typeof(EditorViewData)) as EditorViewData;
-            if (data != null)
+            //加载界面数据
+            var editorViewDataCompletePath = AudioEditorManager.EditorViewDataPath;
+            editorViewData = AssetDatabase.LoadAssetAtPath(editorViewDataCompletePath, typeof(EditorViewData)) as EditorViewData;
+            if (editorViewData == null)
             {
-                loadEditorViewDataSuccess = true;
-            }
-
-            if (loadEditorManagerDataSuccess == false || loadEditorViewDataSuccess == false)
-            {
-                data = ScriptableObject.CreateInstance<EditorViewData>();
-                for (int i = 0; i < 4; i++)
+                editorViewData = ScriptableObject.CreateInstance<EditorViewData>();
+                if (System.IO.Directory.Exists(AudioEditorManager.EditorDataFolder) == false)
                 {
-                    data.myTreeLists[i].Add(new MyTreeElement("root", -1, 0));
-                    data.myTreeLists[i].Add(new MyTreeElement("Work Unit", 0, 1));
+                    System.IO.Directory.CreateDirectory(AudioEditorManager.EditorDataFolder);
                 }
 
-                //创建目录
-                ManagerData = ScriptableObject.CreateInstance<AudioEditorData>();
-                var filePath = AudioEditorManager.DataPath;
-                var number = filePath.LastIndexOf("/", StringComparison.Ordinal);
-                filePath = filePath.Remove(number);
-                System.IO.Directory.CreateDirectory(filePath);
-
-                AssetDatabase.CreateAsset(data, EditorWindowDataPath);
-                AssetDatabase.CreateAsset(ManagerData, AudioEditorManager.DataPath);
-                Debug.Log("[AudioEditor]：创建数据");
+                AssetDatabase.CreateAsset(editorViewData, editorViewDataCompletePath);
+                AudioEditorDebugLog.Log("创建界面数据");
             }
 
-            horizontalSpliterRect = new Rect(0, CurrentHorizontalSpliterHeight, position.width, 3f);
-            verticalSpliterRect = new Rect(CurrentVerticalSpliterWidth, 0, 3f, position.height);
+            if (ManagerData == null)
+            {
+                AudioEditorManager.LoadDataAsset();
+            }
+            //校验数据的完整性（root被删除等）
+            var checkDataCompletely = true;
+            if (ManagerData == null)
+            {
+                checkDataCompletely = false;
+            }
+            else
+            {
+                for (int i = 0; i < MyTreeLists.TreeListCount; i++)
+                {
+                    if (ManagerData.myTreeLists == null)
+                    {
+                        //没有赋值
+                        checkDataCompletely = false;
+                        break;
+                    }
+                    if (ManagerData.myTreeLists[i].Count == 0)
+                    {
+                        //没有获取到数据
+                        checkDataCompletely = false;
+                    }
+                    else if (ManagerData.myTreeLists[i][0].id != 0)
+                    {
+                        //首位不为root
+                        checkDataCompletely = false;
+                    }
+                }
+            }
+            if (checkDataCompletely == false)
+            {
+                ManagerData = AudioEditorData.CreateDefaultData();
+                for (int i = 0; i < editorViewData.myTreeViewStates.Length; i++)
+                {
+                    editorViewData.myTreeViewStates[i] = new TreeViewState();
+                }
+                AudioEditorDebugLog.Log("新建数据");
+            }
+            CreateTempFile();
+
+
+            //这里Position的数据并不准确，但是在后面GUI中会进行修正
+            horizontalSpliterRect = new Rect(0, CurrentHorizontalSpliterHeight, window.position.width, 3f);
+            verticalSpliterRect = new Rect(CurrentVerticalSpliterWidth, 0, 3f, window.position.height);
 
             InitTreeView();
 
-           BoldLabelStyleSkin = ScriptableObject.CreateInstance<GUISkin>();
-           BoldLabelStyleSkin.label.fontStyle = FontStyle.Bold;
+            whiteLableStyleSkin = new GUIStyle();
+            whiteLableStyleSkin.normal.textColor = Color.white;
+            whiteLableStyleSkin.alignment = TextAnchor.UpperCenter;
+            whiteLableStyleSkin.clipping = TextClipping.Clip;
+            whiteLableStyleSkin.stretchWidth = false;
+            whiteLableStyleSkin.stretchHeight = true;
+            whiteLableStyleSkin.wordWrap = true;
 
             preGUIColor = GUI.color;
-        }
 
+            CheckSoundSFXClipPath();
+
+
+        }
 
         #region 列表树初始化及相关事项注册
         /// <summary>
@@ -185,29 +342,30 @@ namespace ypzxAudioEditor
         /// </summary>
         void InitTreeView()
         {
-            // Debug.Log("InitTreeView");
+            //Debug.Log("InitTreeView"); 
 
             var headerState = MultiColumnTreeView.CreateDefaultMultiColumnHeaderState();
-            if (MultiColumnHeaderState.CanOverwriteSerializedFields(m_MultiColumnHeaderState, headerState))
+            if (MultiColumnHeaderState.CanOverwriteSerializedFields(mMultiColumnHeaderState, headerState))
             {
-                MultiColumnHeaderState.OverwriteSerializedFields(m_MultiColumnHeaderState, headerState);
+                MultiColumnHeaderState.OverwriteSerializedFields(mMultiColumnHeaderState, headerState);
             }
 
-            m_MultiColumnHeaderState = headerState;
+            mMultiColumnHeaderState = headerState;
             var myMultiColumnHeader = new MultiColumnHeader(headerState);
             myMultiColumnHeader.ResizeToFit();
             myMultiColumnHeader.height = 20;
 
-            m_SearchField = new SearchField();
+            mSearchField = new SearchField();
 
-            for (int i = 0; i < 4; i++)
+            for (int i = 0; i < MyTreeLists.TreeListCount; i++)
             {
-                myTreeModels[i] = new TreeModel<MyTreeElement>(data.myTreeLists[i]);
-                myTreeViews[i] =
-                    new MultiColumnTreeView(data.MyTreeViewStates[i], myMultiColumnHeader, myTreeModels[i]);
+                myTreeModels[i] = new TreeModel<MyTreeElement>(ManagerData.myTreeLists[i]);
 
-                m_SearchField.downOrUpArrowKeyPressed -= myTreeViews[i].SetFocusAndEnsureSelectedItem;
-                m_SearchField.downOrUpArrowKeyPressed += myTreeViews[i].SetFocusAndEnsureSelectedItem;
+                myTreeViews[i] =
+                    new MultiColumnTreeView(editorViewData.myTreeViewStates[i], myMultiColumnHeader, myTreeModels[i]);
+
+                mSearchField.downOrUpArrowKeyPressed -= myTreeViews[i].SetFocusAndEnsureSelectedItem;
+                mSearchField.downOrUpArrowKeyPressed += myTreeViews[i].SetFocusAndEnsureSelectedItem;
 
                 myTreeViews[i].TreeViewItemSelectionChange -= TreeViewSelectionChange;
                 myTreeViews[i].TreeViewItemSelectionChange += TreeViewSelectionChange;
@@ -222,10 +380,10 @@ namespace ypzxAudioEditor
                 {
                     myTreeViews[i].disableToggle = true;
                 }
-
             }
-            myTreeViews[0].TreeElementEnableChange -= ContainerChildEnableChange;
-            myTreeViews[0].TreeElementEnableChange += ContainerChildEnableChange;
+            //以下仅在Audio标签下可以实施的行为
+            myTreeViews[0].TreeElementEnableChange -= TreeviewItemEnableChange;
+            myTreeViews[0].TreeElementEnableChange += TreeviewItemEnableChange;
             myTreeViews[0].TreeViewItemDrag -= DragInContainerChildrenID;
             myTreeViews[0].TreeViewItemDrag += DragInContainerChildrenID;
             myTreeViews[0].OutsideResourceDragIn -= OutSideResourceImport;
@@ -239,23 +397,23 @@ namespace ypzxAudioEditor
 
         private void TreeViewItemRenameEnd(int id, string newName)
         {
-            switch (data.ProjectExplorerTabIndex)
+            switch (editorViewData.ProjectExplorerTabIndex)
             {
-                case (int)ProjectExplorerTab.Audio:
-                    var currentSelectData = AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(id);
+                case (int)AudioEditorDataType.Audio:
+                    AEComponent currentSelectData = AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(id);
                     if (currentSelectData != null) currentSelectData.name = newName;
                     break;
-                case (int)ProjectExplorerTab.Events:
+                case (int)AudioEditorDataType.Events:
                     currentSelectData = AudioEditorManager.GetAEComponentDataByID<AEEvent>(id);
                     if (currentSelectData != null) currentSelectData.name = newName;
                     break;
-                case (int)ProjectExplorerTab.GameSyncs:
+                case (int)AudioEditorDataType.GameSyncs:
                     currentSelectData = AudioEditorManager.GetAEComponentDataByID<AEGameSyncs>(id);
                     if (currentSelectData != null) currentSelectData.name = newName;
                     break;
-                case (int)ProjectExplorerTab.Banks:
-                    Debug.LogError("未完成");
-                    break;
+                    //case (int)AudioEditorDataType.Banks:
+                    //    Debug.LogError("未完成");
+                    //    break;
             }
         }
 
@@ -283,29 +441,35 @@ namespace ypzxAudioEditor
         /// <summary>
         ///  确认每个组件之间的拖动逻辑
         /// </summary>
-        /// <param name="dragitemIDs"></param>
-        /// <param name="parentItem"></param>
+        /// <param name="dragitemIDs">要拖动的元素</param>
+        /// <param name="parentItem">要拖入的父级元素</param>
         /// <returns></returns>
         private bool CheckDragItems(List<int> dragitemIDs, TreeViewItem parentItem)
         {
             var dragitemsHasWorkUnit = false;
+            var dragitemsHasActorMixer = false;
             foreach (var dragitemID in dragitemIDs)
             {
-                var treeElement = myTreeModels[data.ProjectExplorerTabIndex].Find(dragitemID);
+                var treeElement = myTreeModels[editorViewData.ProjectExplorerTabIndex].Find(dragitemID);
                 if (treeElement == null)
                 {
-                    Debug.LogError("[AudioEditor]：发生错误");
+                    AudioEditorDebugLog.LogError("发生错误");
                     break;
                 }
                 //拖动的项目中有以下类别时，不允许进行拖动
-                if (treeElement.Type == AEComponentType.Switch || treeElement.Type == AEComponentType.State)
+                if (treeElement.type == AEComponentType.Switch || treeElement.type == AEComponentType.State)
                 {
                     return false;
                 }
 
-                if (treeElement.Type == AEComponentType.Workunit)
+                if (treeElement.type == AEComponentType.WorkUnit)
                 {
                     dragitemsHasWorkUnit = true;
+                }
+
+                if (treeElement.type == AEComponentType.ActorMixer)
+                {
+                    dragitemsHasActorMixer = true;
                 }
             }
 
@@ -313,17 +477,32 @@ namespace ypzxAudioEditor
             {
                 var parentdata = (parentItem as TreeViewItem<MyTreeElement>).data;
                 //拖入的父级有以下类别时，不允许拖入
-                if (parentdata.Type == AEComponentType.SwitchGroup ||
-                    parentdata.Type == AEComponentType.StateGroup ||
-                    parentdata.Type == AEComponentType.Event)
+                if (parentdata.type == AEComponentType.SwitchGroup ||
+                    parentdata.type == AEComponentType.StateGroup ||
+                    parentdata.type == AEComponentType.Event)
                 {
                     return false;
                 }
                 //特殊情况,WorkUnit的父级必须为WorkUnit
-                if (dragitemsHasWorkUnit && parentdata.Type != AEComponentType.Workunit)
+                if (dragitemsHasWorkUnit && parentdata.type != AEComponentType.WorkUnit)
                 {
                     return false;
                 }
+
+                //特殊情况,ActorMixer的父级必须为ActorMixer或者WorkUnit
+                if (dragitemsHasActorMixer && parentdata.id == 0)
+                {
+                    return false;
+                }
+                if (dragitemsHasActorMixer && (parentdata.type != AEComponentType.ActorMixer &&
+                                               parentdata.type != AEComponentType.WorkUnit))
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                return false;
             }
             return true;
         }
@@ -332,69 +511,60 @@ namespace ypzxAudioEditor
         /// 设置当外部资源拖入UI时的生成行为
         /// </summary>
         /// <param name="resourcePaths">资源的相对目录</param>
-        /// <param name="dragInParentID">拖入的父级id</param>
+        /// <param name="dragInParentId">拖入的父级id</param>
         /// <param name="insertPosition">要插入的位置</param>
-        private void OutSideResourceImport(List<string> resourcePaths, int dragInParentID, int insertPosition)
+        private void OutSideResourceImport(List<string> resourcePaths, int dragInParentId, int insertPosition)
         {
             var newItemIDs = new List<int>();
-            var parentItem = myTreeModels[0].Find(dragInParentID);
+            var parentItem = myTreeModels[0].Find(dragInParentId);
             foreach (var path in resourcePaths)
             {
                 var newAudioClip = AssetDatabase.LoadAssetAtPath(path, typeof(AudioClip)) as AudioClip;
                 var newComponentData = GenerateData(AEComponentType.SoundSFX, parentItem, insertPosition, newAudioClip.name) as SoundSFX;
-                //如果需要在数据中剔除掉clip来使数据动态加载，需要修改此处
-                // if (newAudioClip.LoadAudioData())
-                // {
-                //     Debug.Log("load success");
-                // }
                 newComponentData.clip = newAudioClip;
-                CheckGUIDAndPathWhenClipLoad(newComponentData);
-                // newComponentData.name = newComponentData.clip.name;
-                data.GetTreeListElementByID(newComponentData.id).name = newComponentData.clip.name;
+                FreshGuidAndPathWhenClipLoad(newComponentData);
+                GetTreeListElementByID(newComponentData.id).name = newComponentData.clip.name;
                 newItemIDs.Add(newComponentData.id);
             }
             myTreeViews[0].SetSelection(newItemIDs);
             myTreeViews[0].Reload();
-
-
         }
 
         /// <summary>
         /// 当鼠标拖动释放时，处理拖动数据的原父类和现父类中的ChildrenID数据
         /// </summary>
         /// <param name="dragIDs">拖动的子项id</param>
-        /// <param name="dragInParentID">要拖入的父项id</param>
+        /// <param name="dragInParentId">要拖入的父项id</param>
         /// <param name="insertPosition">要插入的位置</param>
-        private void DragInContainerChildrenID(List<int> dragIDs, int dragInParentID, int insertPosition)
+        private void DragInContainerChildrenID(List<int> dragIDs, int dragInParentId, int insertPosition)
         {
             //插入
-            var dragInParentData = AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(dragInParentID);
+            var dragInParentData = AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(dragInParentId);
             //逆序插入使得插入序列与DragOut序列一致
-            if (dragInParentData is AEContainer container)
+            if (dragInParentData is IAEContainer container)
             {
                 for (int i = dragIDs.Count - 1; i >= 0; i--)
                 {
                     container.ChildrenID.Insert(insertPosition, dragIDs[i]);
                 }
-
             }
             //删除
             var dragOutParentIDs = new HashSet<int>();
             foreach (var childID in dragIDs)
             {
                 //获取原Parent的id
-                var parentID = myTreeModels[data.ProjectExplorerTabIndex].Find(childID).parent.id;
+                var parentID = myTreeModels[editorViewData.ProjectExplorerTabIndex].Find(childID).parent.id;
                 dragOutParentIDs.Add(parentID);
             }
             //先插入后删除会导致当为同一层级内的排列时候，ChildrenID中有复数相同ID，需鉴别
-            foreach (var ID in dragOutParentIDs)
+            foreach (var dragOutParentID in dragOutParentIDs)
             {
-                var dragOutParentData = AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(ID);
-                if (dragOutParentData is AEContainer dragOutContainer)
+                var dragOutParentData = AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(dragOutParentID);
+                if (dragOutParentData is IAEContainer dragOutContainer)
                 {
                     for (int i = 0; i < dragIDs.Count; i++)
                     {
-                        if (ID == dragInParentID)
+                        if (dragOutParentID == dragInParentId)
                         {
                             var index = dragOutContainer.ChildrenID.FindIndex(x => x == dragIDs[i]);
                             //当有多个数据进行插入时，数据的位置为插入位置+自身在拖动列表中的位置
@@ -403,7 +573,7 @@ namespace ypzxAudioEditor
                                 index = dragOutContainer.ChildrenID.FindLastIndex(x => x == dragIDs[i]);
                             }
                             dragOutContainer.ChildrenID.RemoveAt(index);
-                            Debug.Log("remove Index:" + index);
+                            //Debug.Log("remove Index:" + index);
                         }
                         else
                         {
@@ -414,34 +584,69 @@ namespace ypzxAudioEditor
                             }
                         }
                     }
+                    //检测SwitchContainer的OutputList
                     if (dragOutParentData is SwitchContainer switchContainer)
                     {
-                        switchContainer.ResetOutputIDList(dragIDs);
+                        if (dragOutParentID != dragInParentId)
+                        {
+                            switchContainer.ResetOutputIDList(dragIDs);
+                        }
                     }
+                    //删除blendContainre中track相关数据
+                    if (dragOutParentData is BlendContainer blendContainer)
+                    {
+                        foreach (var blendContainerTrack in blendContainer.blendContainerTrackList)
+                        {
+                            foreach (var dragID in dragIDs)
+                            {
+                                blendContainerTrack.RemoveChildBlendInfoByChildID(dragID);
+                            }
+                        }
+                    }
+                    manager.SyncDataToPlayable(dragOutParentID, AudioComponentDataChangeType.ContainerChildrenChange);
                 }
             }
-
+            manager.SyncDataToPlayable(dragInParentId, AudioComponentDataChangeType.ContainerChildrenChange);
             GUI.changed = true;
-            Debug.Log("Drag Complete");
+            //Debug.Log("Drag Complete");
         }
 
         /// <summary>
-        /// 当Container中有子项的enabled切换时，修改Container中ChildID的相关内容
+        /// 当某项Item的enabled切换时，修改其父级Container中ChildID的相关内容
         /// </summary>
-        /// <param name="Child"></param>
-        private void ContainerChildEnableChange(MyTreeElement Child)
+        /// <param name="item"></param>
+        private void TreeviewItemEnableChange(MyTreeElement item)
         {
             DataRegisterToUndo();
-            var parentData = AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(Child.parent.id);
+            var parentData = AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(item.parent.id);
             //若当前enabled为true，则从ChildrenID中删除，再切换为false
-            if (Child.enabled)
+            if (item.enabled)
             {
-                if (parentData is AEContainer Container)
+                if (parentData is IAEContainer container)
                 {
-                    var index = Container.ChildrenID.FindIndex(x => x == Child.id);
+                    var index = container.ChildrenID.FindIndex(x => x == item.id);
                     if (index != -1)
                     {
-                        Container.ChildrenID.RemoveAt(index);
+                        container.ChildrenID.RemoveAt(index);
+                    }
+
+                    if (parentData is SwitchContainer switchContainer)
+                    {
+                        if (switchContainer.outputIDList.Contains(item.id))
+                        {
+                            switchContainer.outputIDList[switchContainer.outputIDList.FindIndex(x => x == item.id)] = -1;
+                        }
+                    }
+
+                    if (parentData is BlendContainer blendContainer)
+                    {
+                        foreach (var blendContainerTrack in blendContainer.blendContainerTrackList)
+                        {
+                            for (int i = 0; i < blendContainerTrack.ChildrenBlendInfoListCount; i++)
+                            {
+                                blendContainerTrack.RemoveChildBlendInfoByChildID(item.id);
+                            }
+                        }
                     }
                 }
             }
@@ -449,24 +654,24 @@ namespace ypzxAudioEditor
             {
                 //通过TreeView寻找当前Child在Parent中的位置，以确定应该在ChildrenID中插入的位置
                 int insertPosition = -1;
-                for (int i = 0; i < Child.parent.children.Count; i++)
+                for (int i = 0; i < item.parent.children.Count; i++)
                 {
-                    if (Child.parent.children[i].id == Child.id)
+                    if (item.parent.children[i].id == item.id)
                     {
                         insertPosition++;
                         break;
                     }
-                    else if (myTreeModels[data.ProjectExplorerTabIndex].Find(Child.parent.children[i].id).enabled)
+                    else if (myTreeModels[editorViewData.ProjectExplorerTabIndex].Find(item.parent.children[i].id).enabled)
                     {
                         insertPosition++;
                     }
                 }
                 //将ChildID插入对应的位置
-                if (parentData is AEContainer Container)
+                if (parentData is IAEContainer container)
                 {
-                    var index = Container.ChildrenID.FindIndex(x => x == Child.id);
+                    var index = container.ChildrenID.FindIndex(x => x == item.id);
                     if (index != -1) return;
-                    Container.ChildrenID.Insert(insertPosition, Child.id);
+                    container.ChildrenID.Insert(insertPosition, item.id);
                 }
             }
         }
@@ -475,34 +680,40 @@ namespace ypzxAudioEditor
         /// </summary>
         private void TreeViewSelectionChange()
         {
-            switch (data.ProjectExplorerTabIndex)
+            switch (editorViewData.ProjectExplorerTabIndex)
             {
-                case (int)ProjectExplorerTab.Audio:
+                case (int)AudioEditorDataType.Audio:
                     //标志位等刷新
-                    FoldoutHeaderFlags = new List<bool>();
-                    ScorllViewPosition = Vector2.zero;
+                    foldoutHeaderFlags = new List<bool>();
+                    scorllViewPosition = Vector2.zero;
+                    blendContainerTracksDepthInfoList = null;
+                    leftAnchorRectDragInBlendContainerGraph = false;
+                    rightAnchorRectDragInBlendContainerGraph = false;
 
                     //_3DSettingScrollPosition = Vector2.zero;
                     //RTPCSettingScrollPosition = Vector2.zero;
                     whichRTPCSelect = 0;
-                    if (data.freshPageWhenTabInexChange)
+                    if (editorViewData.freshPageWhenTabInexChange)
                     {
                         PropertyEditorTabIndex = 0;
                     }
                     GraphWaveDisplay.displayID = -1;
 
                     //停止正在预览的播放
-                    previewState = PreviewModeState.Stoped;
-                    manager.ApplyAudioComponentPreview(previewObject, AEEventType.StopAll);
+                    if (previewState != PreviewModeState.Stoped)
+                    {
+                        previewState = PreviewModeState.Stoped;
+                        manager.ApplyAudioComponentPreview(previewObject, AEEventType.StopAll);
+                    }
                     break;
-                case (int)ProjectExplorerTab.Events:
+                case (int)AudioEditorDataType.Events:
                     whichEventUnitSelect = 0;
                     break;
-                case (int)ProjectExplorerTab.GameSyncs:
+                case (int)AudioEditorDataType.GameSyncs:
                     //StateGroupScrollPosition = Vector2.zero;
                     break;
-                case (int)ProjectExplorerTab.Banks:
-                    break;
+                //case (int)ProjectExplorerTab.Banks:
+                //    break;
                 default:
                     break;
             }
@@ -529,25 +740,40 @@ namespace ypzxAudioEditor
             InitTreeView();
         }
 
+        /// <summary>
+        /// 展示在Audio标签页下右键显示的菜单
+        /// </summary>
         private void ShowTreeViewContextClickMenu()
         {
+            Event.current.Use();
             // Debug.Log("ContextClickedItem:" + id);
+
+            foreach (var selectedID in editorViewData.myTreeViewStates[0].selectedIDs)
+            {
+                //暂时ActorMixer不能使用右键菜单
+                var data = AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(selectedID);
+                if (data is ActorMixer)
+                {
+                    return;
+                }
+            }
+
             var menu = new GenericMenu();
             menu.AddItem(new GUIContent("NewEvent/Play"), false, () =>
             {
-                GenerateAEEvent(AEEventType.Play, data.MyTreeViewStates[0].selectedIDs);
+                GenerateAEEvent(AEEventType.Play, editorViewData.myTreeViewStates[0].selectedIDs);
             });
             menu.AddItem(new GUIContent("NewEvent/Pause"), false, () =>
             {
-                GenerateAEEvent(AEEventType.Pause, data.MyTreeViewStates[0].selectedIDs);
+                GenerateAEEvent(AEEventType.Pause, editorViewData.myTreeViewStates[0].selectedIDs);
             });
             menu.AddItem(new GUIContent("NewEvent/Resume"), false, () =>
             {
-                GenerateAEEvent(AEEventType.Resume, data.MyTreeViewStates[0].selectedIDs);
+                GenerateAEEvent(AEEventType.Resume, editorViewData.myTreeViewStates[0].selectedIDs);
             });
             menu.AddItem(new GUIContent("NewEvent/Stop"), false, () =>
             {
-                GenerateAEEvent(AEEventType.Stop, data.MyTreeViewStates[0].selectedIDs);
+                GenerateAEEvent(AEEventType.Stop, editorViewData.myTreeViewStates[0].selectedIDs);
             });
             // menu.AddItem(new GUIContent("NewEvent/StopAll"), false, () =>
             // {
@@ -556,10 +782,14 @@ namespace ypzxAudioEditor
             menu.AddSeparator(string.Empty);
             menu.AddItem(new GUIContent("Delete"), false, () =>
             {
-                TreeViewDelete(data.MyTreeViewStates[data.ProjectExplorerTabIndex].selectedIDs);
+                TreeViewDelete(editorViewData.myTreeViewStates[editorViewData.ProjectExplorerTabIndex].selectedIDs);
             });
             menu.ShowAsContext();
+
+            Repaint();
         }
+
+        #endregion
 
         private void GenerateAEEvent(AEEventType eventType, List<int> targetIDs)
         {
@@ -572,16 +802,14 @@ namespace ypzxAudioEditor
             }
         }
 
-
-        #endregion
-
         private void GenerateEffectSettingGameObject()
         {
             var transform = manager.gameObject.transform.Find("EffectSettingObject");
             if (transform == null)
             {
                 effectSettingObject = EditorUtility.CreateGameObjectWithHideFlags("EffectSettingObject",
-                    HideFlags.HideAndDontSave);
+                   AudioEditorManager.debugMode ? HideFlags.DontSave : HideFlags.HideAndDontSave);
+                effectSettingObject.tag = "EditorOnly";
                 effectSettingObject.transform.parent = manager.transform;
                 effectSettingObject.AddComponent<AudioSource>();
                 effectSettingObject.AddComponent<AudioReverbFilter>().reverbPreset = AudioReverbPreset.Off;
@@ -591,13 +819,19 @@ namespace ypzxAudioEditor
             {
                 effectSettingObject = transform.gameObject;
             }
-
             transform = manager.gameObject.transform.Find("PreviewObject");
             if (transform == null)
             {
                 previewObject = EditorUtility.CreateGameObjectWithHideFlags("PreviewObject",
-                    HideFlags.HideAndDontSave);
+                    AudioEditorManager.debugMode ? HideFlags.DontSave : HideFlags.HideAndDontSave);
+                previewObject.tag = "EditorOnly";
                 previewObject.transform.parent = manager.transform;
+
+                //如果没有audioListener则挂载在preview下
+                //if (FindObjectOfType<AudioListener>() == null)
+                //{
+                //    previewObject.AddComponent<AudioListener>();
+                //}
             }
             else
             {
@@ -607,42 +841,43 @@ namespace ypzxAudioEditor
 
         void OnDestroy()
         {
-            //window = (AudioEditorView)EditorWindow.GetWindow(typeof(AudioEditorView), true, "Audio Editor Manager");
-            //data.WindowPosition = window.position;
             Undo.undoRedoPerformed -= TreeViewUndoRedo;
-            //取消列表命名中的状态
-            for (int i = 0; i < 4; i++)
-            {
-                data.myTreeLists[i] = (List<MyTreeElement>)myTreeModels[i].GetData();
-                myTreeViews[i].EndRename();
-            }
-            //停止正在播放的预览实例
-            manager.ApplyAudioComponentPreview(previewObject, AEEventType.StopAll);
-            //卸载已加载的AudioClip
-            AudioEditorManager.UnloadAllAudioClip();
-            //取消关联clip，如果正在runtime时关闭编辑器界面则不取消关联，等待Manager调用Destroy时再取消关联
-            if (ManagerData && ManagerData.StaticallyLinkedAudioClips == false && EditorApplication.isPlaying == false)
-            {
-                AudioEditorManager.UnlinkAllAudioClips();
-            }
 
-            //储存修改
-            EditorUtility.SetDirty(data);
-            if (manager)
+            if (manager != null)
             {
-                EditorUtility.SetDirty(ManagerData);
-            }
-            AssetDatabase.SaveAssets();
+                //取消列表命名中的状态
+                for (int i = 0; i < MyTreeLists.TreeListCount; i++)
+                {
+                    ManagerData.myTreeLists[i] = myTreeModels[i].GetData().ToList();
+                    myTreeViews[i].EndRename();
+                }
+                //停止正在播放的预览实例
+                manager.ApplyAudioComponentPreview(previewObject, AEEventType.StopAll);
+                //卸载已加载的AudioClip
+                AudioEditorManager.UnloadAllAudioClip();
+                //取消关联clip，如果正在runtime时关闭编辑器界面则不取消关联，等待Manager调用Destroy时再取消关联
+                if (ManagerData && manager.staticallyLinkedAudioClips == false && EditorApplication.isPlaying == false)
+                {
+                    manager.UnlinkAllAudioClips();
+                }
+                //检查文件路径是否有更改
+                CheckSoundSFXClipPath();
 
-            DestroyImmediate(effectSettingObject);
-            DestroyImmediate(previewObject);
+                //储存修改
+                SaveData();
+
+                ClearTempFile();
+
+                DestroyImmediate(effectSettingObject);
+                DestroyImmediate(previewObject);
+            }
 
             DestroyWindow?.Invoke();
         }
 
         void OnGUI()
         {
-            if (!manager)
+            if (manager == null)
             {
                 var currentColor = GUI.color;
                 GUI.color = Color.red;
@@ -669,70 +904,86 @@ namespace ypzxAudioEditor
                 GenerateEffectSettingGameObject();
             }
 
-            Undo.RecordObject(data, "AudioEditorWindow Change");
+            Undo.RecordObject(editorViewData, "AudioEditorWindow Change");
             Undo.RecordObject(ManagerData, "AudioEditorWindow Change");
 
-            //TODO: 实例的数据同步
-
-            GUILayout.BeginVertical();
-            GUILayout.BeginHorizontal();
-
-            GUI.color = preGUIColor;
-            EditorGUILayout.BeginScrollView(Vector2.zero, GUILayout.Width(CurrentVerticalSpliterWidth), GUILayout.Height(CurrentHorizontalSpliterHeight));
-            GUILayout.BeginArea(new Rect(0, 0, CurrentVerticalSpliterWidth, CurrentHorizontalSpliterHeight), GUI.skin.box);
-            DrawProjectExplorerWindow();
-            //  GUILayout.Box(new GUIContent("左上方窗口"), GUI.skin.box, GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(true));
-            GUILayout.EndArea();
-            EditorGUILayout.EndScrollView();
-
-            SetVerticalSpliter();
-
-            EditorGUILayout.BeginScrollView(Vector2.zero, GUILayout.Height(CurrentHorizontalSpliterHeight));
-            var rect = new Rect(0, 0, position.width - CurrentVerticalSpliterWidth - verticalSpliterRect.width, CurrentHorizontalSpliterHeight);
-            GUI.SetNextControlName("PropertyEditorWindow Background Area");
-            GUILayout.BeginArea(rect, GUI.skin.box);
-            DrawPropertyEditorWindow();
-            //GUILayout.Box(new GUIContent("右上方窗口"), GUI.skin.box, GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(true));
-            if (rect.Contains(Event.current.mousePosition) && Event.current.type == EventType.MouseDown)
+            try
             {
-                GUI.FocusControl("PropertyEditorWindow Background Area");
-                myTreeViews[data.ProjectExplorerTabIndex].EndRename();
+                GUILayout.BeginVertical();
+                GUILayout.BeginHorizontal();
+
+                GUI.color = preGUIColor;
+                EditorGUILayout.BeginScrollView(Vector2.zero, GUILayout.Width(CurrentVerticalSpliterWidth), GUILayout.Height(CurrentHorizontalSpliterHeight));
+                GUILayout.BeginArea(new Rect(0, 0, CurrentVerticalSpliterWidth, CurrentHorizontalSpliterHeight), GUI.skin.box);
+                DrawProjectExplorerWindow();
+                GUILayout.EndArea();
+                EditorGUILayout.EndScrollView();
+
+                SetVerticalSpliter();
+
+                EditorGUILayout.BeginScrollView(Vector2.zero, GUILayout.Height(CurrentHorizontalSpliterHeight));
+                var rect = new Rect(0, 0, position.width - CurrentVerticalSpliterWidth - verticalSpliterRect.width, CurrentHorizontalSpliterHeight);
+                // GUI.SetNextControlName("PropertyEditorWindow Background Area");
+                GUILayout.BeginArea(rect, GUI.skin.box);
+                DrawPropertyEditorWindow();
+                //if (rect.Contains(Event.current.mousePosition) && Event.current.type == EventType.MouseDown)
+                //{
+                //    GUI.FocusControl("PropertyEditorWindow Background Area");
+                //    myTreeViews[editorViewData.ProjectExplorerTabIndex].EndRename();
+                //}
+                GUILayout.EndArea();
+                EditorGUILayout.EndScrollView();
+
+                GUILayout.EndHorizontal();
+
+                SetHorizontalSpliter();
+
+                GUILayout.BeginHorizontal();
+
+                EditorGUILayout.BeginScrollView(Vector2.zero, GUILayout.Width(CurrentVerticalSpliterWidth), GUILayout.Height(position.height - CurrentHorizontalSpliterHeight - horizontalSpliterRect.height));
+                GUILayout.BeginArea(new Rect(0, 0, CurrentVerticalSpliterWidth, position.height - CurrentHorizontalSpliterHeight - horizontalSpliterRect.height), GUI.skin.box);
+                //GUILayout.Box(new GUIContent("说明窗口"), GUI.skin.box, GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(true));
+                GUILayout.Box("", GUI.skin.box, GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(true));
+                GUILayout.EndArea();
+                EditorGUILayout.EndScrollView();
+
+                GUILayout.Space(verticalSpliterRect.width);
+
+                EditorGUILayout.BeginScrollView(Vector2.zero, GUILayout.Height(position.height - CurrentHorizontalSpliterHeight - horizontalSpliterRect.height));
+                GUILayout.BeginArea(new Rect(0, 0, position.width - CurrentVerticalSpliterWidth - verticalSpliterRect.width, position.height - CurrentHorizontalSpliterHeight - horizontalSpliterRect.height), GUI.skin.box);
+                DrawPreviewWindow();
+                //GUILayout.Box(new GUIContent("右下方窗口"), GUI.skin.box, GUILayout.ExpandHeight(true), GUILayout.ExpandWidth(true));
+                GUILayout.EndArea();
+                EditorGUILayout.EndScrollView();
+
+                GUILayout.EndHorizontal();
+                GUILayout.EndVertical();
             }
-            GUILayout.EndArea();
-            EditorGUILayout.EndScrollView();
+            catch (Exception e)
+            {
+                if (e is UnityEngine.ExitGUIException == false)
+                {
+                    AudioEditorDebugLog.LogWarning("发生未知错误");
+                    Debug.Log(e);
+                    editorViewData.myTreeViewStates[editorViewData.ProjectExplorerTabIndex].lastClickedID = 0;
+                    throw;
+                }
+            }
 
-            GUILayout.EndHorizontal();
+            //点击空白地方取消TreeView的焦点，并结束命名状态（如果有）
+            if (Event.current.type == EventType.MouseDown)
+            {
+                GUIUtility.keyboardControl = -1;
+                myTreeViews[editorViewData.ProjectExplorerTabIndex].EndRename();
+                Event.current.Use();
+            }
 
-            SetHorizontalSpliter();
-
-            GUILayout.BeginHorizontal();
-
-            EditorGUILayout.BeginScrollView(Vector2.zero, GUILayout.Width(CurrentVerticalSpliterWidth), GUILayout.Height(position.height - CurrentHorizontalSpliterHeight - horizontalSpliterRect.height));
-            GUILayout.BeginArea(new Rect(0, 0, CurrentVerticalSpliterWidth, position.height - CurrentHorizontalSpliterHeight - horizontalSpliterRect.height), GUI.skin.box);
-            GUILayout.Box(new GUIContent("说明窗口"), GUI.skin.box, GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(true));
-            GUILayout.EndArea();
-            EditorGUILayout.EndScrollView();
-
-            GUILayout.Space(verticalSpliterRect.width);
-
-            EditorGUILayout.BeginScrollView(Vector2.zero, GUILayout.Height(position.height - CurrentHorizontalSpliterHeight - horizontalSpliterRect.height));
-            GUILayout.BeginArea(new Rect(0, 0, position.width - CurrentVerticalSpliterWidth - verticalSpliterRect.width, position.height - CurrentHorizontalSpliterHeight - horizontalSpliterRect.height), GUI.skin.box);
-            DrawPreviewWindow();
-            //GUILayout.Box(new GUIContent("右下方窗口"), GUI.skin.box, GUILayout.ExpandHeight(true), GUILayout.ExpandWidth(true));
-            GUILayout.EndArea();
-            EditorGUILayout.EndScrollView();
-
-            GUILayout.EndHorizontal();
-            GUILayout.EndVertical();
-
-            //Editor下更新频率低，主动在此调用
-            // if (!EditorApplication.isPaused && !EditorApplication.isPlaying)
-            // {
-            //     for (int i = 0; i < manager.PlayableList.Count; i++)
-            //     {
-            //         manager.PlayableList[i].m_Graph.Evaluate();
-            //     }
-            // }
+            if (EditorWindow.focusedWindow == window && Event.current.control && Event.current.keyCode == KeyCode.S &&
+                Event.current.type == EventType.KeyDown)
+            {
+                SaveData();
+                AudioEditorDebugLog.Log("保存数据");
+            }
 
         }
 
@@ -799,10 +1050,11 @@ namespace ypzxAudioEditor
         /// </summary>
         private void DrawProjectExplorerWindow()
         {
-            int tabIndex = GUILayout.Toolbar(data.ProjectExplorerTabIndex, projectExplorerTabNames, EditorStyles.toolbarButton, GUI.ToolbarButtonSize.Fixed, GUILayout.ExpandWidth(true), GUILayout.Height(EditorGUIUtility.singleLineHeight));
-            if (tabIndex != data.ProjectExplorerTabIndex)
+            int tabIndex = GUILayout.Toolbar(editorViewData.ProjectExplorerTabIndex, projectExplorerTabNames, EditorStyles.toolbarButton, GUI.ToolbarButtonSize.Fixed, GUILayout.ExpandWidth(true), GUILayout.Height(EditorGUIUtility.singleLineHeight));
+            if (tabIndex != editorViewData.ProjectExplorerTabIndex)
             {
-                data.ProjectExplorerTabIndex = tabIndex;
+                editorViewData.ProjectExplorerTabIndex = tabIndex;
+                myTreeViews[tabIndex].SetFocus();
                 for (int i = 0; i < myTreeViews.Length; i++)
                 {
                     myTreeViews[i].EndRename();
@@ -811,18 +1063,31 @@ namespace ypzxAudioEditor
             }
             GUILayoutOption[] buttonOptions = { GUILayout.MaxWidth(21), GUILayout.ExpandWidth(false) };
             GUI.color = backgroundBoxColor;
-            switch (data.ProjectExplorerTabIndex)
+
+            var currentSelectID = editorViewData.myTreeViewStates[editorViewData.ProjectExplorerTabIndex].lastClickedID;
+
+            var currentSelectElement = myTreeModels[editorViewData.ProjectExplorerTabIndex].Find(currentSelectID);
+
+            switch (editorViewData.ProjectExplorerTabIndex)
             {
-                case (int)ProjectExplorerTab.Audio:
+                case (int)AudioEditorDataType.Audio:
                     EditorGUILayout.BeginHorizontal();
-                    //New WorkUnit Buttonif (GUILayout.Button(new GUIContent(IconUtility.ComponentIconDictionary[AEComponentType.workUnit], "Work Unit"), GUI.skin.box, buttonOptions))
-                    if (GUILayout.Button(IconUtility.GetIconContent(AEComponentType.Workunit), GUI.skin.box, buttonOptions))
+                    //New WorkUnit Button
+                    EditorGUI.BeginDisabledGroup(currentSelectElement.type != AEComponentType.WorkUnit);
+                    if (GUILayout.Button(IconUtility.GetIconContent(AEComponentType.WorkUnit), GUI.skin.box, buttonOptions))
                     {
-                        var id = myTreeModels[0].GenerateUniqueID();
-                        myTreeModels[0].AddElement(new MyTreeElement("Work Unit", 0, id, AEComponentType.Workunit), myTreeModels[0].root, myTreeModels[0].root.children.Count);
-                        myTreeViews[0].EndRename();
-                        myTreeViews[0].BeginRename(id);
+                        GenerateData(AEComponentType.WorkUnit);
                     }
+                    EditorGUI.EndDisabledGroup();
+
+                    EditorGUI.BeginDisabledGroup(currentSelectElement.type != AEComponentType.WorkUnit &&
+                                                 currentSelectElement.type != AEComponentType.ActorMixer);
+                    if (GUILayout.Button(IconUtility.GetIconContent(AEComponentType.ActorMixer), GUI.skin.box,
+                        buttonOptions))
+                    {
+                        GenerateData(AEComponentType.ActorMixer);
+                    }
+                    EditorGUI.EndDisabledGroup();
                     //New SoundSFX Button
                     if (GUILayout.Button(IconUtility.GetIconContent(AEComponentType.SoundSFX), GUI.skin.box, buttonOptions))
                     {
@@ -846,20 +1111,21 @@ namespace ypzxAudioEditor
                     //New BlendContainer Button
                     if (GUILayout.Button(IconUtility.GetIconContent(AEComponentType.BlendContainer), GUI.skin.box, buttonOptions))
                     {
-                        //TODO : 实现BlandContainer功能
-                        Debug.LogWarning("未完成");
+                        GenerateData(AEComponentType.BlendContainer);
                     }
                     EditorGUILayout.EndHorizontal();
                     GUI.color = preGUIColor;
                     DrawSearchBarAndTreeView();
                     break;
-                case (int)ProjectExplorerTab.Events:
+                case (int)AudioEditorDataType.Events:
                     EditorGUILayout.BeginHorizontal();
                     //WorkUnit
-                    if (GUILayout.Button(IconUtility.GetIconContent(AEComponentType.Workunit), GUI.skin.box, buttonOptions))
+                    EditorGUI.BeginDisabledGroup(currentSelectElement.type != AEComponentType.WorkUnit);
+                    if (GUILayout.Button(IconUtility.GetIconContent(AEComponentType.WorkUnit), GUI.skin.box, buttonOptions))
                     {
-                        myTreeModels[1].AddElement(new MyTreeElement("Work Unit", 0, myTreeModels[1].GenerateUniqueID(), AEComponentType.Workunit), myTreeModels[1].root, myTreeModels[1].root.children.Count);
+                        GenerateData(AEComponentType.WorkUnit);
                     }
+                    EditorGUI.EndDisabledGroup();
                     if (GUILayout.Button(IconUtility.GetIconContent(AEComponentType.Event), GUI.skin.box, buttonOptions))
                     {
                         GenerateData(AEComponentType.Event);
@@ -868,45 +1134,57 @@ namespace ypzxAudioEditor
                     GUI.color = preGUIColor;
                     DrawSearchBarAndTreeView();
                     break;
-                case (int)ProjectExplorerTab.GameSyncs:
-                    var currentSelectID = data.MyTreeViewStates[data.ProjectExplorerTabIndex].lastClickedID;
-                    var currentSelectElement = myTreeModels[data.ProjectExplorerTabIndex].Find(currentSelectID);
+                case (int)AudioEditorDataType.GameSyncs:
                     EditorGUILayout.BeginHorizontal();
                     //WorkUnit
-                    if (GUILayout.Button(IconUtility.GetIconContent(AEComponentType.Workunit), GUI.skin.box, buttonOptions))
+                    EditorGUI.BeginDisabledGroup(currentSelectElement.type != AEComponentType.WorkUnit);
+                    if (GUILayout.Button(IconUtility.GetIconContent(AEComponentType.WorkUnit), GUI.skin.box,
+                        buttonOptions))
                     {
-                        myTreeModels[2].AddElement(new MyTreeElement("Work Unit", 0, myTreeModels[2].GenerateUniqueID(), AEComponentType.Workunit), myTreeModels[2].root, myTreeModels[2].root.children.Count);
+                        GenerateData(AEComponentType.WorkUnit);
                     }
-                    EditorGUI.BeginDisabledGroup(currentSelectElement.Type != AEComponentType.Workunit);
-                    if (GUILayout.Button(IconUtility.GetIconContent(AEComponentType.SwitchGroup), GUI.skin.box, buttonOptions))
+
+                    EditorGUI.EndDisabledGroup();
+                    EditorGUI.BeginDisabledGroup(currentSelectElement.type != AEComponentType.WorkUnit);
+                    if (GUILayout.Button(IconUtility.GetIconContent(AEComponentType.SwitchGroup), GUI.skin.box,
+                        buttonOptions))
                     {
                         GenerateData(AEComponentType.SwitchGroup);
                     }
+
                     EditorGUI.EndDisabledGroup();
-                    EditorGUI.BeginDisabledGroup(currentSelectElement.Type != AEComponentType.SwitchGroup && currentSelectElement.Type != AEComponentType.Switch);
-                    if (GUILayout.Button(IconUtility.GetIconContent(AEComponentType.Switch), GUI.skin.box, buttonOptions))
+                    EditorGUI.BeginDisabledGroup(currentSelectElement.type != AEComponentType.SwitchGroup &&
+                                                 currentSelectElement.type != AEComponentType.Switch);
+                    if (GUILayout.Button(IconUtility.GetIconContent(AEComponentType.Switch), GUI.skin.box,
+                        buttonOptions))
                     {
                         GenerateData(AEComponentType.Switch);
                     }
+
                     EditorGUI.EndDisabledGroup();
 
-                    EditorGUI.BeginDisabledGroup(currentSelectElement.Type != AEComponentType.Workunit);
-                    if (GUILayout.Button(IconUtility.GetIconContent(AEComponentType.StateGroup), GUI.skin.box, buttonOptions))
+                    EditorGUI.BeginDisabledGroup(currentSelectElement.type != AEComponentType.WorkUnit);
+                    if (GUILayout.Button(IconUtility.GetIconContent(AEComponentType.StateGroup), GUI.skin.box,
+                        buttonOptions))
                     {
                         GenerateData(AEComponentType.StateGroup);
                         GenerateData(AEComponentType.State, dataName: "None");
-                        myTreeViews[data.ProjectExplorerTabIndex].EndRename();
+                        myTreeViews[editorViewData.ProjectExplorerTabIndex].EndRename();
                     }
+
                     EditorGUI.EndDisabledGroup();
 
-                    EditorGUI.BeginDisabledGroup(currentSelectElement.Type != AEComponentType.StateGroup && currentSelectElement.Type != AEComponentType.State);
-                    if (GUILayout.Button(IconUtility.GetIconContent(AEComponentType.State), GUI.skin.box, buttonOptions))
+                    EditorGUI.BeginDisabledGroup(currentSelectElement.type != AEComponentType.StateGroup &&
+                                                 currentSelectElement.type != AEComponentType.State);
+                    if (GUILayout.Button(IconUtility.GetIconContent(AEComponentType.State), GUI.skin.box,
+                        buttonOptions))
                     {
                         GenerateData(AEComponentType.State);
                     }
+
                     EditorGUI.EndDisabledGroup();
 
-                    EditorGUI.BeginDisabledGroup(currentSelectElement.Type != AEComponentType.Workunit);
+                    EditorGUI.BeginDisabledGroup(currentSelectElement.type != AEComponentType.WorkUnit && currentSelectElement.type != AEComponentType.GameParameter);
                     if (GUILayout.Button(IconUtility.GetIconContent(AEComponentType.GameParameter), GUI.skin.box, buttonOptions))
                     {
                         GenerateData(AEComponentType.GameParameter);
@@ -916,26 +1194,14 @@ namespace ypzxAudioEditor
                     GUI.color = preGUIColor;
                     DrawSearchBarAndTreeView();
                     break;
-                case (int)ProjectExplorerTab.Banks:
-                    // if (GUILayout.Button("保存数据"))
-                    // {
-                    //
-                    //     // AssetDatabase.SaveAssets();
-                    //     if (manager)
-                    //     {
-                    //         EditorUtility.SetDirty(ManagerData);
-                    //         EditorUtility.SetDirty(data);
-                    //     }
-                    //     AssetDatabase.SaveAssets();
-                    //     //Debug.LogError("此页面未完成");
-                    // }
-                    if (GUILayout.Button("test"))
-                    {
-                        AudioEditorManager.GetAEComponentDataByID<Switch>(0);
-                    }
-                    GUI.color = preGUIColor;
-                    DrawSearchBarAndTreeView();
-                    break;
+                    //case (int)ProjectExplorerTab.Banks:
+                    //    if (GUILayout.Button("保存数据"))
+                    //    {
+                    //        SaveData();
+                    //    }
+                    //    GUI.color = preGUIColor;
+                    //    DrawSearchBarAndTreeView();
+                    //    break;
             }
 
         }
@@ -952,24 +1218,25 @@ namespace ypzxAudioEditor
             DataRegisterToUndo();
             switch (type)
             {
-                case AEComponentType.Workunit:
+                case AEComponentType.WorkUnit:
                     break;
                 case AEComponentType.SoundSFX:
                 case AEComponentType.RandomContainer:
                 case AEComponentType.SequenceContainer:
                 case AEComponentType.SwitchContainer:
                 case AEComponentType.BlendContainer:
-                    data.ProjectExplorerTabIndex = 0;
+                case AEComponentType.ActorMixer:
+                    editorViewData.ProjectExplorerTabIndex = 0;
                     break;
                 case AEComponentType.Event:
-                    data.ProjectExplorerTabIndex = 1;
+                    editorViewData.ProjectExplorerTabIndex = 1;
                     break;
                 case AEComponentType.SwitchGroup:
                 case AEComponentType.Switch:
                 case AEComponentType.StateGroup:
                 case AEComponentType.State:
                 case AEComponentType.GameParameter:
-                    data.ProjectExplorerTabIndex = 2;
+                    editorViewData.ProjectExplorerTabIndex = 2;
                     break;
                 default:
                     Debug.LogError("发生错误");
@@ -978,42 +1245,56 @@ namespace ypzxAudioEditor
 
             if (parentElement == null)
             {
-                parentElement = data.GetTreeListElementByID(data.MyTreeViewStates[data.ProjectExplorerTabIndex].lastClickedID);
+                parentElement = GetTreeListElementByID(editorViewData.myTreeViewStates[editorViewData.ProjectExplorerTabIndex].lastClickedID);
             }
+            //workunit只能生成在workunit下
+            if (type == AEComponentType.WorkUnit && parentElement.type != AEComponentType.WorkUnit)
+            {
+                return null;
+            }
+
+            if (type == AEComponentType.ActorMixer && parentElement.type != AEComponentType.ActorMixer)
+            {
+                return null;
+            }
+
             var depth = parentElement.depth + 1;
             //某些组件不能作为父类，如果当前选择为soundSFX、Event等，则再往上一级创建
-            if (parentElement.Type == AEComponentType.SoundSFX ||
-                parentElement.Type == AEComponentType.Event ||
-                parentElement.Type == AEComponentType.GameParameter ||
-                parentElement.Type == AEComponentType.Switch ||
-                parentElement.Type == AEComponentType.State)
+            if (parentElement.type == AEComponentType.SoundSFX ||
+                parentElement.type == AEComponentType.Event ||
+                parentElement.type == AEComponentType.GameParameter ||
+                parentElement.type == AEComponentType.Switch ||
+                parentElement.type == AEComponentType.State)
             {
                 parentElement = (MyTreeElement)parentElement.parent;
                 depth -= 1;
             }
 
-            var id = myTreeModels[data.ProjectExplorerTabIndex].GenerateUniqueID();
-            var name = dataName ?? string.Format("New " + type.ToString() + "_" + id);
+            var id = myTreeModels[editorViewData.ProjectExplorerTabIndex].GenerateUniqueID();
+            var name = dataName ?? string.Format("New_" + type.ToString() + "_" + id);
             MyTreeElement newElement = new MyTreeElement(name, depth, id, type);
             if (insertPosition == -1)
             {
                 insertPosition = parentElement.hasChildren ? parentElement.children.Count : 0;
             }
-            myTreeModels[data.ProjectExplorerTabIndex].AddElement(newElement, parentElement, insertPosition);
-            myTreeViews[data.ProjectExplorerTabIndex].SetExpanded(parentElement.id, true);
+            myTreeModels[editorViewData.ProjectExplorerTabIndex].AddElement(newElement, parentElement, insertPosition);
+            myTreeViews[editorViewData.ProjectExplorerTabIndex].SetExpanded(parentElement.id, true);
+
+            myTreeViews[editorViewData.ProjectExplorerTabIndex].EndRename();
+            myTreeViews[editorViewData.ProjectExplorerTabIndex].BeginRename(newElement.id);
+            var newList = new List<int> { newElement.id };
+            myTreeViews[editorViewData.ProjectExplorerTabIndex].SetSelection(newList);
+            myTreeViews[editorViewData.ProjectExplorerTabIndex].FrameItem(newElement.id);
+            var newComponentData = manager.GenerateManagerData(newElement.name, newElement.id, type, parentElement.id);
 
             var parentData = AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(parentElement.id);
-
-            if (parentData is AEContainer container)
+            if (parentData is IAEContainer container)
             {
                 container.ChildrenID.Insert(insertPosition, newElement.id);
+                manager.SyncDataToPlayable(parentData.id, AudioComponentDataChangeType.ContainerChildrenChange);
             }
-            myTreeViews[data.ProjectExplorerTabIndex].EndRename();
-            myTreeViews[data.ProjectExplorerTabIndex].BeginRename(newElement.id);
-            var newList = new List<int> { newElement.id };
-            myTreeViews[data.ProjectExplorerTabIndex].SetSelection(newList);
-            myTreeViews[data.ProjectExplorerTabIndex].FrameItem(newElement.id);
-            return manager.GenerateManagerData(newElement.name, newElement.id, type, parentElement.id);
+
+            return newComponentData;
         }
 
 
@@ -1023,31 +1304,34 @@ namespace ypzxAudioEditor
         private void DrawSearchBarAndTreeView()
         {
             var e = Event.current;
-            var searchString = m_SearchField.OnGUI(data.searchString);
+            var searchString = mSearchField.OnGUI(editorViewData.searchString);
             //data.searchString = m_SearchField.OnGUI(data.searchString);
-            myTreeViews[data.ProjectExplorerTabIndex].searchString = searchString;
+            myTreeViews[editorViewData.ProjectExplorerTabIndex].searchString = searchString;
             var rect = EditorGUILayout.GetControlRect(GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(true));
-            myTreeViews[data.ProjectExplorerTabIndex].OnGUI(rect);
-            if (searchString != data.searchString )
+            myTreeViews[editorViewData.ProjectExplorerTabIndex].OnGUI(rect);
+            if (searchString != editorViewData.searchString)
             {
-                data.searchString = searchString;
-                if(searchString == "")
+                editorViewData.searchString = searchString;
+                if (searchString == "")
                 {
-                    myTreeViews[data.ProjectExplorerTabIndex].FrameItem(data.MyTreeViewStates[data.ProjectExplorerTabIndex].lastClickedID);
-                    myTreeViews[data.ProjectExplorerTabIndex].SetFocusAndEnsureSelectedItem();
+                    myTreeViews[editorViewData.ProjectExplorerTabIndex].FrameItem(editorViewData.myTreeViewStates[editorViewData.ProjectExplorerTabIndex].lastClickedID);
+                    myTreeViews[editorViewData.ProjectExplorerTabIndex].SetFocusAndEnsureSelectedItem();
                 }
             }
             //实现删除功能
-            if (GUIUtility.keyboardControl == myTreeViews[data.ProjectExplorerTabIndex].treeViewControlID && e.type == EventType.KeyDown && e.keyCode == KeyCode.Delete)
+            if (rect.Contains(Event.current.mousePosition) &&
+                GUIUtility.keyboardControl == myTreeViews[editorViewData.ProjectExplorerTabIndex].treeViewControlID &&
+                e.type == EventType.KeyDown && e.keyCode == KeyCode.Delete)
             {
-                if (data.MyTreeViewStates[data.ProjectExplorerTabIndex].lastClickedID != 0)
+                if (editorViewData.myTreeViewStates[editorViewData.ProjectExplorerTabIndex].lastClickedID != 0)
                 {
                     //Debug.Log("delete");
-                    var listID = data.MyTreeViewStates[data.ProjectExplorerTabIndex].selectedIDs;
+                    var listID = editorViewData.myTreeViewStates[editorViewData.ProjectExplorerTabIndex].selectedIDs;
                     TreeViewDelete(listID);
                 }
             }
         }
+
         /// <summary>
         /// 删除id关联的TreeViewData和managerData
         /// </summary>
@@ -1059,8 +1343,8 @@ namespace ypzxAudioEditor
             foreach (var id in idList)
             {
                 //递归删除子类
-                if(myTreeModels[data.ProjectExplorerTabIndex].Find(id) ==null) continue;
-                var children = myTreeModels[data.ProjectExplorerTabIndex].Find(id).children;
+                if (myTreeModels[editorViewData.ProjectExplorerTabIndex].Find(id) == null) continue;
+                var children = myTreeModels[editorViewData.ProjectExplorerTabIndex].Find(id).children;
                 if (children != null)
                 {
                     List<int> newList = new List<int>();
@@ -1072,16 +1356,16 @@ namespace ypzxAudioEditor
                 }
             }
 
-            switch (data.ProjectExplorerTabIndex)
+            switch (editorViewData.ProjectExplorerTabIndex)
             {
-                case (int)ProjectExplorerTab.Audio:
+                case (int)AudioEditorDataType.Audio:
                     foreach (var id in idList)
                     {
-                        if(myTreeModels[0].Find(id) ==null) continue;
+                        if (myTreeModels[0].Find(id) == null) continue;
                         //删除父类中ChildID中的相关子类id
                         var parentID = myTreeModels[0].Find(id).parent.id;
                         var parentData = AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(parentID);
-                        if (parentData is AEContainer container)
+                        if (parentData is IAEContainer container)
                         {
                             for (int i = 0; i < container.ChildrenID.Count; i++)
                             {
@@ -1092,13 +1376,13 @@ namespace ypzxAudioEditor
                         manager.RemoveAEComponentDataByID<AEAudioComponent>(id);
                     }
                     break;
-                case (int)ProjectExplorerTab.Events:
+                case (int)AudioEditorDataType.Events:
                     foreach (var id in idList)
                     {
                         manager.RemoveAEComponentDataByID<AEEvent>(id);
                     }
                     break;
-                case (int)ProjectExplorerTab.GameSyncs:
+                case (int)AudioEditorDataType.GameSyncs:
                     foreach (var id in idList)
                     {
                         //检测是否有不能删除的内容
@@ -1116,19 +1400,28 @@ namespace ypzxAudioEditor
             }
 
             //删除WindowDataAseet中列表树的数据
-            myTreeModels[data.ProjectExplorerTabIndex].RemoveElements(idList);
-            data.MyTreeViewStates[data.ProjectExplorerTabIndex].lastClickedID = 0;
+            myTreeModels[editorViewData.ProjectExplorerTabIndex].RemoveElements(idList);
+            editorViewData.myTreeViewStates[editorViewData.ProjectExplorerTabIndex].lastClickedID = 0;
         }
 
 
         #endregion
 
         #region 绘制右上的属性编辑界面
+        /// <summary>
+        /// 绘制右上的窗口界面
+        /// </summary>
         private void DrawPropertyEditorWindow()
         {
-            var currentSelectID = data.MyTreeViewStates[data.ProjectExplorerTabIndex].lastClickedID;
-            switch (data.GetTreeListElementByID(currentSelectID).Type)
+            if (editorViewData.myTreeViewStates[editorViewData.ProjectExplorerTabIndex].selectedIDs.Count != 1) return;
+            var currentSelectID = editorViewData.myTreeViewStates[editorViewData.ProjectExplorerTabIndex].lastClickedID;
+            switch (GetTreeListElementByID(currentSelectID).type)
             {
+                case AEComponentType.WorkUnit:
+                    break;
+                case AEComponentType.ActorMixer:
+                    DrawActorMixerPropertyEditor(currentSelectID);
+                    break;
                 case AEComponentType.SoundSFX:
                     DrawSoundSFXPropertyEditor(currentSelectID);
                     break;
@@ -1142,7 +1435,7 @@ namespace ypzxAudioEditor
                     DrawSwitchContainerPropertyEditor(currentSelectID);
                     break;
                 case AEComponentType.BlendContainer:
-
+                    DrawBlendContainerPropertyEditor(currentSelectID);
                     break;
                 case AEComponentType.Event:
                     DrawEventPropertyEditor(currentSelectID);
@@ -1153,6 +1446,8 @@ namespace ypzxAudioEditor
                 case AEComponentType.Switch:
                     // var currentSelectSwitch = AudioEditorManager.GetAEComponentDataByID<Switch>(currentSelectID);
                     var currentSelectSwitch = GetCurrentSelectData(currentSelectID, AEComponentType.Switch) as Switch;
+                    if (currentSelectSwitch == null)
+                        return;
                     DrawNameUnit(currentSelectSwitch);
                     break;
                 case AEComponentType.StateGroup:
@@ -1161,19 +1456,24 @@ namespace ypzxAudioEditor
                 case AEComponentType.State:
                     // var currentSelectState = AudioEditorManager.GetAEComponentDataByID<State>(currentSelectID);
                     var currentSelectState = GetCurrentSelectData(currentSelectID, AEComponentType.State) as State;
+                    if (currentSelectState == null)
+                        return;
                     DrawNameUnit(currentSelectState);
                     break;
                 case AEComponentType.GameParameter:
                     DrawGameParameterProperty(currentSelectID);
                     break;
+                default:
+                    throw new ArgumentOutOfRangeException();
             }
         }
 
-        private void DrawSoundSFXPropertyEditor(int id)
+        private void DrawActorMixerPropertyEditor(int id)
         {
-            var currentSelectData = GetCurrentSelectData(id, AEComponentType.SoundSFX) as SoundSFX;
+            var currentSelectData = GetCurrentSelectData(id, AEComponentType.ActorMixer) as ActorMixer;
+            if (currentSelectData == null) return;
 
-            EditorGUI.BeginDisabledGroup(!myTreeModels[data.ProjectExplorerTabIndex].Find(id).enabled);
+            EditorGUI.BeginDisabledGroup(!myTreeModels[editorViewData.ProjectExplorerTabIndex].Find(id).enabled);
 
             DrawPropertyEditorTitleToolBar(currentSelectData);
             switch (PropertyEditorTabIndex)
@@ -1185,47 +1485,118 @@ namespace ypzxAudioEditor
                         var name = EditorGUILayout.TextField(currentSelectData.name);
                         if (name != currentSelectData.name)
                         {
-                            data.GetTreeListElementByID(id).name = name;
-                            myTreeViews[data.ProjectExplorerTabIndex].Reload();
+                            GetTreeListElementByID(id).name = name;
+                            myTreeViews[editorViewData.ProjectExplorerTabIndex].Reload();
                         }
-                        currentSelectData.name = data.GetTreeListElementByID(id).name;
+                        currentSelectData.name = GetTreeListElementByID(id).name;
                         GUILayout.Label("id:");
-                        EditorGUI.BeginDisabledGroup(data.ProjectExplorerTabIndex != 1);
+                        EditorGUI.BeginDisabledGroup(editorViewData.ProjectExplorerTabIndex != 1);
                         EditorGUILayout.IntField(currentSelectData.id);
                         EditorGUI.EndDisabledGroup();
                         GUILayout.FlexibleSpace();
-                        if (currentSelectData.clipAssetPath != "" || currentSelectData.clipGUID != "")
-                        {
-                            if (currentSelectData.clip == null)
-                            {
-                                currentSelectData.clip = AssetDatabase.LoadAssetAtPath<AudioClip>(currentSelectData.clipAssetPath);
-                            }
-                            if (currentSelectData.clip == null)
-                            {
-                                var path = AssetDatabase.GUIDToAssetPath(currentSelectData.clipGUID);
-                                currentSelectData.clip = AssetDatabase.LoadAssetAtPath<AudioClip>(path);
-                                if (currentSelectData.clip != null)
-                                    currentSelectData.clipAssetPath = path;
-                            }
-                            if (currentSelectData.clip == null && currentSelectData.clipAssetPath !="")
-                            {
-                                Debug.LogError($"[AudioEditor]: 组件名:{currentSelectData.name}，id:{currentSelectData.id}, 无法加载AudioClip，请检查文件列表，路径为{currentSelectData.clipAssetPath}");
-                                currentSelectData.clipAssetPath = "";
-                            }
 
-                            if (currentSelectData.clip != null)
+                        EditorGUILayout.EndHorizontal();
+
+                        GUILayout.Space(EditorGUIUtility.standardVerticalSpacing);
+
+                        EditorGUILayout.BeginHorizontal();
+
+                        GUI.color = backgroundBoxColor;
+                        using (new EditorGUILayout.VerticalScope("box", GUILayout.Width((position.width - CurrentVerticalSpliterWidth) / 3 * 2)))
+                        {
+                            GUI.color = preGUIColor;
+                            DrawGeneralSettingUnit(currentSelectData);
+
+                            DrawTransitionsUnit(currentSelectData);
+                        }
+
+                        GUI.color = backgroundBoxColor;
+                        using (new EditorGUILayout.VerticalScope("box", GUILayout.ExpandWidth(false)))
+                        {
+                            GUI.color = preGUIColor;
+                            EditorGUI.BeginChangeCheck();
+
+                            EditorGUI.BeginDisabledGroup(currentSelectData.isContianerChild == false);
+                            var newOverrideActorMixer = GUILayout.Toggle((currentSelectData.overrideFunctionType & AEComponentDataOverrideType.OutputMixerGroup) == AEComponentDataOverrideType.OutputMixerGroup, "Override OutputMixer");
+                            if (newOverrideActorMixer)
                             {
-                                //TODO: 应该在编辑器打开时候遍历一次检查clip的GUID和路径是否正确，以避免在关闭时候移动文件导致数据错误
-                                CheckGUIDAndPathWhenClipLoad(currentSelectData);
+                                currentSelectData.overrideFunctionType |= AEComponentDataOverrideType.OutputMixerGroup;
+                            }
+                            else
+                            {
+                                currentSelectData.overrideFunctionType &= ~AEComponentDataOverrideType.OutputMixerGroup;
+                            }
+                            
+                            EditorGUI.EndDisabledGroup();
+                            EditorGUI.BeginDisabledGroup((currentSelectData.overrideFunctionType & AEComponentDataOverrideType.OutputMixerGroup) != AEComponentDataOverrideType.OutputMixerGroup && currentSelectData.isContianerChild);
+                            currentSelectData.outputMixer = EditorGUILayout.ObjectField(currentSelectData.outputMixer, typeof(AudioMixerGroup), true) as AudioMixerGroup;
+                            EditorGUI.EndDisabledGroup();
+
+                            if (EditorGUI.EndChangeCheck())
+                            {
+                                manager.SyncDataToPlayable(currentSelectData.id, AudioComponentDataChangeType.General);
+                                //Debug.Log("数据刷新 In DrawGeneralSettingsSidePage");
                             }
                         }
+                        EditorGUILayout.EndHorizontal();
+                    }
+                    break;
+                case PropertyEditorTab.Effects:
+                    DrawEffectsSetting(currentSelectData);
+                    break;
+                case PropertyEditorTab.Attenuation:
+                    Draw3DSetting(currentSelectData);
+                    break;
+                case PropertyEditorTab.RTPC:
+                    DrawRTPCSettingUnit(currentSelectData);
+                    break;
+                case PropertyEditorTab.States:
+                    DrawStateSettingUnit(currentSelectData);
+                    break;
+                case PropertyEditorTab.OtherSetting:
+                    DrawOtherSettingUnit(currentSelectData);
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+            EditorGUI.EndDisabledGroup();
+        }
+
+        private void DrawSoundSFXPropertyEditor(int id)
+        {
+            var currentSelectData = GetCurrentSelectData(id, AEComponentType.SoundSFX) as SoundSFX;
+            if (currentSelectData == null) return;
+
+            EditorGUI.BeginDisabledGroup(!myTreeModels[editorViewData.ProjectExplorerTabIndex].Find(id).enabled);
+
+            DrawPropertyEditorTitleToolBar(currentSelectData);
+            switch (PropertyEditorTabIndex)
+            {
+                case PropertyEditorTab.GeneralSettings:
+                    {
+                        EditorGUILayout.BeginHorizontal();
+
+                        var name = EditorGUILayout.TextField(currentSelectData.name);
+                        if (name != currentSelectData.name)
+                        {
+                            GetTreeListElementByID(id).name = name;
+                            myTreeViews[editorViewData.ProjectExplorerTabIndex].Reload();
+                        }
+                        currentSelectData.name = GetTreeListElementByID(id).name;
+                        GUILayout.Label("id:");
+                        EditorGUI.BeginDisabledGroup(editorViewData.ProjectExplorerTabIndex != 1);
+                        EditorGUILayout.IntField(currentSelectData.id);
+                        EditorGUI.EndDisabledGroup();
+                        GUILayout.FlexibleSpace();
+
+                        LoadSoundSFXAudioClip(currentSelectData);
                         var newAudioClip = EditorGUILayout.ObjectField(currentSelectData.clip, typeof(AudioClip), true) as AudioClip;
                         if (newAudioClip != currentSelectData.clip)
                         {
                             currentSelectData.clip = newAudioClip;
-                            CheckGUIDAndPathWhenClipLoad(currentSelectData);
+                            FreshGuidAndPathWhenClipLoad(currentSelectData);
                             GraphWaveDisplay.displayID = -1;
-                            manager.SyncPlayableData(currentSelectData.id,AudioComponentDataChangeType.AudioClipChange);
+                            manager.SyncDataToPlayable(currentSelectData.id, AudioComponentDataChangeType.AudioClipChange);
                         }
                         EditorGUILayout.EndHorizontal();
 
@@ -1277,8 +1648,9 @@ namespace ypzxAudioEditor
         private void DrawRandomContainerPropertyEditor(int id)
         {
             var currentSelectData = GetCurrentSelectData(id, AEComponentType.RandomContainer) as RandomContainer;
+            if (currentSelectData == null) return;
 
-            EditorGUI.BeginDisabledGroup(!myTreeModels[data.ProjectExplorerTabIndex].Find(id).enabled);
+            EditorGUI.BeginDisabledGroup(!myTreeModels[editorViewData.ProjectExplorerTabIndex].Find(id).enabled);
 
             DrawPropertyEditorTitleToolBar(currentSelectData);
             switch (PropertyEditorTabIndex)
@@ -1297,7 +1669,7 @@ namespace ypzxAudioEditor
 
                         DrawTransitionsUnit(currentSelectData);
 
-                        EditorGUILayout.LabelField("Container Setting", BoldLabelStyleSkin.label);
+                        EditorGUILayout.LabelField("Container Setting", EditorStyles.boldLabel);
                         EditorGUI.indentLevel++;
                         EditorGUILayout.BeginHorizontal();
                         EditorGUILayout.PrefixLabel(new GUIContent("Play Type"));
@@ -1308,6 +1680,22 @@ namespace ypzxAudioEditor
                         EditorGUILayout.PrefixLabel(new GUIContent("Play Mode"));
                         currentSelectData.PlayMode = (ContainerPlayMode)GUILayout.Toolbar((int)currentSelectData.PlayMode, Enum.GetNames(typeof(ContainerPlayMode)));
                         EditorGUILayout.EndHorizontal();
+
+                        EditorGUILayout.Space(EditorGUIUtility.singleLineHeight);
+
+                        EditorGUILayout.BeginHorizontal();
+                        using (new EditorGUILayout.VerticalScope())
+                        {
+                            EditorGUI.BeginDisabledGroup(currentSelectData.PlayMode != ContainerPlayMode.Continuous);
+                            currentSelectData.crossFade = EditorGUILayout.BeginToggleGroup(new GUIContent("CrossFade", "交叉淡变"), currentSelectData.crossFade);
+                            currentSelectData.crossFadeTime = EditorGUILayout.FloatField(new GUIContent("CrossFade Time"), currentSelectData.crossFadeTime);
+                            currentSelectData.crossFadeType = (CrossFadeType)EditorGUILayout.EnumPopup(new GUIContent("CrossFade Type", "淡变类型"), currentSelectData.crossFadeType);
+                            EditorGUILayout.EndToggleGroup();
+                            EditorGUI.EndDisabledGroup();
+                        }
+                        GUILayout.FlexibleSpace();
+                        EditorGUILayout.EndHorizontal();
+
                         EditorGUI.indentLevel--;
                     }
 
@@ -1318,7 +1706,6 @@ namespace ypzxAudioEditor
                         DrawGeneralSettingsSidePage(currentSelectData);
                     }
                     EditorGUILayout.EndHorizontal();
-                    EditorGUILayout.GetControlRect(GUILayout.ExpandHeight(true));
                     break;
                 case PropertyEditorTab.Effects:
                     DrawEffectsSetting(currentSelectData);
@@ -1344,8 +1731,9 @@ namespace ypzxAudioEditor
         private void DrawSequenceContainerPropertyEditor(int id)
         {
             var currentSelectData = GetCurrentSelectData(id, AEComponentType.SequenceContainer) as SequenceContainer;
+            if (currentSelectData == null) return;
 
-            EditorGUI.BeginDisabledGroup(!myTreeModels[data.ProjectExplorerTabIndex].Find(id).enabled);
+            EditorGUI.BeginDisabledGroup(!myTreeModels[editorViewData.ProjectExplorerTabIndex].Find(id).enabled);
 
             DrawPropertyEditorTitleToolBar(currentSelectData);
             switch (PropertyEditorTabIndex)
@@ -1363,7 +1751,7 @@ namespace ypzxAudioEditor
                         DrawGeneralSettingUnit(currentSelectData);
                         DrawTransitionsUnit(currentSelectData);
 
-                        EditorGUILayout.LabelField("Container Setting", BoldLabelStyleSkin.label);
+                        EditorGUILayout.LabelField("Container Setting", EditorStyles.boldLabel);
                         EditorGUI.indentLevel++;
                         EditorGUILayout.BeginHorizontal();
                         EditorGUILayout.PrefixLabel(new GUIContent("Play Type", "决定下一次播放的顺序"));
@@ -1375,6 +1763,20 @@ namespace ypzxAudioEditor
                         currentSelectData.PlayMode = (ContainerPlayMode)GUILayout.Toolbar((int)currentSelectData.PlayMode, Enum.GetNames(typeof(ContainerPlayMode)));
                         EditorGUILayout.EndHorizontal();
                         currentSelectData.alwaysResetPlayList = EditorGUILayout.Toggle(new GUIContent("Always Reset PlayList", "每次播放都重置为正序或逆序的标准序列组"), currentSelectData.alwaysResetPlayList, GUILayout.ExpandWidth(false));
+
+                        EditorGUILayout.BeginHorizontal();
+                        using (new EditorGUILayout.VerticalScope())
+                        {
+                            EditorGUI.BeginDisabledGroup(currentSelectData.PlayMode != ContainerPlayMode.Continuous);
+                            currentSelectData.crossFade = EditorGUILayout.BeginToggleGroup(new GUIContent("CrossFade", "交叉淡变"), currentSelectData.crossFade);
+                            currentSelectData.crossFadeTime = EditorGUILayout.FloatField(new GUIContent("CrossFade Time"), currentSelectData.crossFadeTime);
+                            currentSelectData.crossFadeType = (CrossFadeType)EditorGUILayout.EnumPopup(new GUIContent("CrossFade Type", "淡变类型"), currentSelectData.crossFadeType);
+                            EditorGUILayout.EndToggleGroup();
+                            EditorGUI.EndDisabledGroup();
+                        }
+                        GUILayout.FlexibleSpace();
+                        EditorGUILayout.EndHorizontal();
+
                         EditorGUI.indentLevel--;
                     }
                     // EditorGUILayout.EndVertical();
@@ -1410,13 +1812,12 @@ namespace ypzxAudioEditor
         }
 
         #region 绘制SwtichContianer的属性编辑界面
-        // private int outputListWaitForSelect;
         private void DrawSwitchContainerPropertyEditor(int id)
         {
             var currentSelectData = GetCurrentSelectData(id, AEComponentType.SwitchContainer) as SwitchContainer;
+            if (currentSelectData == null) return;
 
-
-            EditorGUI.BeginDisabledGroup(!myTreeModels[data.ProjectExplorerTabIndex].Find(id).enabled);
+            EditorGUI.BeginDisabledGroup(!myTreeModels[editorViewData.ProjectExplorerTabIndex].Find(id).enabled);
 
             DrawPropertyEditorTitleToolBar(currentSelectData);
             switch (PropertyEditorTabIndex)
@@ -1433,20 +1834,19 @@ namespace ypzxAudioEditor
                         DrawGeneralSettingUnit(currentSelectData);
                         DrawTransitionsUnit(currentSelectData);
 
-                        EditorGUILayout.LabelField("Container Setting", BoldLabelStyleSkin.label);
+                        EditorGUILayout.LabelField("Container Setting", EditorStyles.boldLabel);
                         EditorGUI.indentLevel++;
                         EditorGUILayout.BeginHorizontal();
                         EditorGUILayout.PrefixLabel(new GUIContent("Play Mode", "决定播放模式为步进或连续"));
                         currentSelectData.PlayMode = (ContainerPlayMode)GUILayout.Toolbar((int)currentSelectData.PlayMode, Enum.GetNames(typeof(ContainerPlayMode)));
                         EditorGUILayout.EndHorizontal();
 
-                        var switchGroupData = AudioEditorManager.GetAEComponentDataByID<SwitchGroup>(currentSelectData.switchGroupID) as SwitchGroup;
+                        var switchGroupData = AudioEditorManager.GetAEComponentDataByID<SwitchGroup>(currentSelectData.switchGroupID);
                         if (switchGroupData == null)
                         {
                             currentSelectData.switchGroupID = -1;
                             Repaint();
                         }
-                        //TODO: container的特别控件没有实例同步数据检测
                         EditorGUILayout.BeginHorizontal();
                         EditorGUILayout.PrefixLabel(new GUIContent("SwitchGroup"));
                         var selectedSwitchGroupName = currentSelectData.switchGroupID == -1 ? "null" : switchGroupData.name;
@@ -1469,31 +1869,45 @@ namespace ypzxAudioEditor
                             // }));
                         }
                         EditorGUILayout.EndHorizontal();
+
+                        EditorGUILayout.BeginHorizontal();
+                        using (new EditorGUILayout.VerticalScope())
+                        {
+                            EditorGUI.BeginDisabledGroup(currentSelectData.PlayMode != ContainerPlayMode.Continuous);
+                            currentSelectData.crossFade = EditorGUILayout.BeginToggleGroup(new GUIContent("CrossFade", "交叉淡变"), currentSelectData.crossFade);
+                            currentSelectData.crossFadeTime = EditorGUILayout.FloatField(new GUIContent("CrossFade Time"), currentSelectData.crossFadeTime);
+                            currentSelectData.crossFadeType = (CrossFadeType)EditorGUILayout.EnumPopup(new GUIContent("CrossFade Type", "淡变类型"), currentSelectData.crossFadeType);
+                            EditorGUILayout.EndToggleGroup();
+                            EditorGUI.EndDisabledGroup();
+                        }
+                        GUILayout.FlexibleSpace();
+                        EditorGUILayout.EndHorizontal();
+
                         EditorGUI.indentLevel--;
                         EditorGUILayout.Space();
-                        EditorGUILayout.LabelField("Group Setting", BoldLabelStyleSkin.label);
+                        EditorGUILayout.LabelField("Group Setting", EditorStyles.boldLabel);
                         if (currentSelectData.switchGroupID != -1)
                         {
-                            if (FoldoutHeaderFlags.Count != switchGroupData.SwitchListCount)
+                            if (foldoutHeaderFlags.Count != switchGroupData.SwitchListCount)
                             {
-                                FoldoutHeaderFlags.Clear();
+                                foldoutHeaderFlags.Clear();
                             }
-                            if (FoldoutHeaderFlags.Count == 0)
+                            if (foldoutHeaderFlags.Count == 0)
                             {
                                 for (int i = 0; i < switchGroupData.SwitchListCount; i++)
                                 {
-                                    FoldoutHeaderFlags.Add(true);
+                                    foldoutHeaderFlags.Add(true);
                                 }
                             }
 
-                            ScorllViewPosition = EditorGUILayout.BeginScrollView(ScorllViewPosition);
+                            scorllViewPosition = EditorGUILayout.BeginScrollView(scorllViewPosition, GUILayout.ExpandHeight(false));
                             for (int i = 0; i < switchGroupData.SwitchListCount; i++)
                             {
                                 var rect = EditorGUILayout.GetControlRect();
                                 rect.width -= GUI.skin.verticalScrollbar.fixedWidth;
-                                var name = i == currentSelectData.defualtPlayIndex ? string.Format(switchGroupData.FindSwitchAt(i).name + "(default)") : switchGroupData.FindSwitchAt(i).name;
-                                FoldoutHeaderFlags[i] = EditorGUI.BeginFoldoutHeaderGroup(rect, FoldoutHeaderFlags[i], name);
-                                if (FoldoutHeaderFlags[i])
+                                var name = i == currentSelectData.defualtPlayIndex ? string.Format(switchGroupData.GetSwitchAt(i).name + "(default)") : switchGroupData.GetSwitchAt(i).name;
+                                foldoutHeaderFlags[i] = EditorGUI.BeginFoldoutHeaderGroup(rect, foldoutHeaderFlags[i], name);
+                                if (foldoutHeaderFlags[i])
                                 {
                                     using (new EditorGUI.IndentLevelScope())
                                     {
@@ -1557,21 +1971,26 @@ namespace ypzxAudioEditor
         {
             GenericMenu menu = new GenericMenu();
             menu.allowDuplicateNames = true;
-            foreach (var item in ManagerData.GameSyncsData)
+            foreach (var item in ManagerData.gameSyncsData)
             {
                 if (item is SwitchGroup switchGroup)
                 {
                     menu.AddItem(new GUIContent(switchGroup.name), currentSelectData.switchGroupID == switchGroup.id,
                         () =>
                         {
-                            currentSelectData.switchGroupID = switchGroup.id;
-                            //初始化output数据，用于对应switch列表
-                            currentSelectData.outputIDList = new List<int>();
-                            for (int i = 0; i < (AudioEditorManager.GetAEComponentDataByID<SwitchGroup>(switchGroup.id) as SwitchGroup).SwitchListCount; i++)
+                            if (currentSelectData.switchGroupID != switchGroup.id)
                             {
-                                currentSelectData.outputIDList.Add(-1);
+                                currentSelectData.switchGroupID = switchGroup.id;
+                                //初始化output数据，用于对应switch列表
+                                currentSelectData.outputIDList = new List<int>();
+                                for (int i = 0; i < AudioEditorManager.GetAEComponentDataByID<SwitchGroup>(switchGroup.id).SwitchListCount; i++)
+                                {
+                                    currentSelectData.outputIDList.Add(-1);
+                                }
+                                foldoutHeaderFlags.Clear();
+                                currentSelectData.defualtPlayIndex = 0;
+                                manager.SyncDataToPlayable(currentSelectData.id, AudioComponentDataChangeType.SwitchContainerGroupSettingChange);
                             }
-                            FoldoutHeaderFlags.Clear();
                         });
                 }
             }
@@ -1591,12 +2010,13 @@ namespace ypzxAudioEditor
         private void ShowSwitchContainerChildrenListMenu(Rect rect, SwitchContainer currentSelectedData, int outputListWaitForSelect)
         {
             GenericMenu menu = new GenericMenu { allowDuplicateNames = true };
-            foreach (var ID in currentSelectedData.ChildrenID)
+            foreach (var id in currentSelectedData.ChildrenID)
             {
-                var name = AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(ID).name;
-                menu.AddItem(new GUIContent(name), currentSelectedData.outputIDList[outputListWaitForSelect] == ID, (x) =>
+                var name = AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(id).name;
+                menu.AddItem(new GUIContent(name), currentSelectedData.outputIDList[outputListWaitForSelect] == id, (x) =>
                 {
-                    currentSelectedData.outputIDList[(int)x] = ID;
+                    currentSelectedData.outputIDList[(int)x] = id;
+                    manager.SyncDataToPlayable(currentSelectedData.id, AudioComponentDataChangeType.SwitchContainerGroupSettingChange);
                 }, outputListWaitForSelect);
             }
             menu.DropDown(rect);
@@ -1604,9 +2024,628 @@ namespace ypzxAudioEditor
 
         #endregion
 
+        #region 绘制BlendContianer的属性编辑界面
+
+        private void DrawBlendContainerPropertyEditor(int id)
+        {
+            var currentSelectData = GetCurrentSelectData(id, AEComponentType.BlendContainer) as BlendContainer;
+            if (currentSelectData == null) return;
+
+            if (blendContainerTracksDepthInfoList == null) blendContainerTracksDepthInfoList = new List<List<int>>();
+            if (blendContainerTracksDepthInfoList.Count != currentSelectData.blendContainerTrackList.Count)
+            {
+                for (int i = 0; i < currentSelectData.blendContainerTrackList.Count; i++)
+                {
+                    blendContainerTracksDepthInfoList.Add(new List<int>());
+                }
+            }
+
+            EditorGUI.BeginDisabledGroup(!myTreeModels[editorViewData.ProjectExplorerTabIndex].Find(id).enabled);
+
+            DrawPropertyEditorTitleToolBar(currentSelectData);
+            switch (PropertyEditorTabIndex)
+            {
+                case PropertyEditorTab.GeneralSettings:
+                    DrawNameUnit(currentSelectData);
+
+                    EditorGUILayout.BeginHorizontal();
+
+                    GUI.color = backgroundBoxColor;
+                    using (new EditorGUILayout.VerticalScope("box", GUILayout.Width((position.width - CurrentVerticalSpliterWidth) / 3 * 2)))
+                    {
+                        GUI.color = preGUIColor;
+
+                        DrawGeneralSettingUnit(currentSelectData);
+
+                        //DrawTransitionsUnit(currentSelectData);
+
+                        EditorGUILayout.LabelField("Container Setting", EditorStyles.boldLabel);
+                        EditorGUI.indentLevel++;
+
+                        EditorGUILayout.BeginHorizontal();
+                        EditorGUILayout.PrefixLabel(new GUIContent("Play Mode"));
+                        currentSelectData.PlayMode = (ContainerPlayMode)GUILayout.Toolbar((int)currentSelectData.PlayMode, Enum.GetNames(typeof(ContainerPlayMode)));
+                        EditorGUILayout.EndHorizontal();
+
+                        EditorGUILayout.BeginHorizontal();
+                        EditorGUILayout.PrefixLabel(new GUIContent("Set NewBlendTrack"));
+                        var buttonRect = EditorGUILayout.GetControlRect();
+                        if (EditorGUI.DropdownButton(buttonRect, new GUIContent("Set GameParameter >>"), FocusType.Passive))
+                        {
+                            var menu = new GenericMenu();
+                            foreach (var gameSyncse in ManagerData.gameSyncsData)
+                            {
+                                if (gameSyncse is GameParameter gameParameter)
+                                {
+                                    menu.AddItem(new GUIContent(gameParameter.name), false, () =>
+                                    {
+                                        currentSelectData.blendContainerTrackList.Add(new BlendContainerTrack(gameParameter.id));
+                                    });
+                                }
+                            }
+                            menu.DropDown(buttonRect);
+                        }
+                        EditorGUILayout.EndHorizontal();
+
+                        EditorGUI.indentLevel--;
+
+                        EditorGUILayout.Space();
+
+                        EditorGUILayout.LabelField("BlendTacks Setting", EditorStyles.boldLabel);
+                        scorllViewPosition = EditorGUILayout.BeginScrollView(scorllViewPosition, GUILayout.ExpandHeight(true));
+
+                        for (var i = 0; i < currentSelectData.blendContainerTrackList.Count; i++)
+                        {
+                            var blendContainerTack = currentSelectData.blendContainerTrackList[i];
+                            var selectedGameParameter =
+                                AudioEditorManager.GetAEComponentDataByID<GameParameter>(blendContainerTack
+                                    .gameParameterId);
+
+                            float? xAxisMinValue = null;
+                            float? xAxisMaxValue = null;
+                            float? xAxisValue = null;
+                            var gameParameterName = "null";
+                            if (selectedGameParameter == null)
+                            {
+                                blendContainerTack.gameParameterId = -1;
+                                xAxisMinValue = null;
+                                xAxisMaxValue = null;
+                            }
+                            else
+                            {
+                                xAxisMinValue = selectedGameParameter.MinValue;
+                                xAxisMaxValue = selectedGameParameter.MaxValue;
+                                xAxisValue = selectedGameParameter.Value;
+                                gameParameterName = selectedGameParameter.name;
+                            }
+
+                            EditorGUILayout.BeginHorizontal();
+                            var selectGameParameterButtonRect =
+                                EditorGUILayout.GetControlRect(GUILayout.ExpandWidth(false));
+                            if (EditorGUI.DropdownButton(selectGameParameterButtonRect,
+                                new GUIContent(gameParameterName), FocusType.Passive))
+                            {
+                                var menu = new GenericMenu();
+                                foreach (var gameSyncse in ManagerData.gameSyncsData)
+                                {
+                                    if (gameSyncse is GameParameter gameParameter)
+                                    {
+                                        menu.AddItem(new GUIContent(gameParameter.name), false, (x) =>
+                                        {
+                                            currentSelectData.blendContainerTrackList[(int)x].gameParameterId = gameParameter.id;
+                                        }, i);
+                                    }
+                                }
+                                menu.DropDown(selectGameParameterButtonRect);
+                            }
+                            GUILayout.FlexibleSpace();
+
+                            if (GUILayout.Button("删除"))
+                            {
+                                currentSelectData.blendContainerTrackList.RemoveAt(i);
+                                continue;
+                            }
+                            EditorGUILayout.EndHorizontal();
+                            var graphRect = EditorGUILayout.GetControlRect(GUILayout.Height(130));
+
+                            var graphdataRect = GraphCurveRendering.Draw(graphRect, null, xAxisMinValue, xAxisMaxValue,
+                                0, 1, xAxisValue);
+                            DrawBlendContainerChildrenBlendInfo(graphdataRect, currentSelectData.blendContainerTrackList[i], i);
+
+                            //图表空白处点击取消当前选中的ChildBlendInfo
+                            if (graphRect.Contains(Event.current.mousePosition) &&
+                                Event.current.type == EventType.MouseDown)
+                            {
+                                GUIUtility.keyboardControl = -1;
+                                myTreeViews[editorViewData.ProjectExplorerTabIndex].EndRename();
+
+                                if (blendContainerTracksDepthInfoList[i].Exists(x => x == -1))
+                                {
+                                    for (int j = 0; j < blendContainerTracksDepthInfoList[i].Count; j++)
+                                    {
+                                        blendContainerTracksDepthInfoList[i][j]++;
+                                    }
+                                }
+                                Repaint();
+                                Event.current.Use();
+                            }
+
+                            if (graphdataRect.Contains(Event.current.mousePosition) &&
+                                Event.current.type == EventType.ContextClick)
+                            {
+                                var mousePosition = Event.current.mousePosition;
+                                //设置右键菜单显示子类选项以设置ChildBlendInfo
+                                var menu = new GenericMenu();
+                                foreach (var childId in currentSelectData.ChildrenID)
+                                {
+                                    var childData =
+                                        AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(childId);
+                                    if (childData == null)
+                                    {
+                                        AudioEditorDebugLog.LogError("数据错误，无法找到子类数据");
+                                        continue;
+                                    }
+
+                                    var funcData = new int[] { i, childId };
+                                    menu.AddItem(new GUIContent(childData.name), false, (x) =>
+                                    {
+                                        //添加新的BlendInfo
+                                        var mousePositionInGraphRect = Rect.PointToNormalized(graphdataRect, mousePosition);
+
+                                        //currentSelectData.blendContainerTackList[((int[])x)[0]].childrenBlendInfoList.Add(new BlendContainerChildBlendInfo(((int[])x)[1]));
+                                        currentSelectData.blendContainerTrackList[((int[])x)[0]]
+                                            .AddNewChildBlendInfo(((int[])x)[1], mousePositionInGraphRect);
+                                    }, funcData);
+                                }
+                                menu.AddSeparator(string.Empty);
+
+                                //menu.AddItem(new GUIContent("All"),false, (x) =>
+                                //{
+                                //    //为所有未添加的child组件新增BlendInfo信息
+                                //    foreach (var childId in currentSelectData.ChildrenID)
+                                //    {
+                                //        if (currentSelectData.blendContainerTackList[(int)x].childrenBlendInfoList
+                                //            .Find(y => y.childId == childId) != null)
+                                //        {
+                                //            continue;
+                                //        }
+                                //        currentSelectData.blendContainerTackList[(int)x].childrenBlendInfoList.Add(new BlendContainerChildBlendInfo(childId));
+                                //    }
+                                //},i);
+
+                                menu.ShowAsContext();
+
+                                Event.current.Use();
+                            }
+                            //绘制当前选中的ChildBlendInfo的信息
+                            if (blendContainerTracksDepthInfoList[i].Exists(x => x == -1) && selectedGameParameter != null)
+                            {
+                                var currentSelectChildBlendInfoIndex =
+                                    blendContainerTracksDepthInfoList[i].FindIndex(x => x == -1);
+                                var childBlendInfo = currentSelectData.blendContainerTrackList[i]
+                                    .GetChildBlendInfo(currentSelectChildBlendInfoIndex);
+                                using (new EditorGUILayout.HorizontalScope(GUILayout.Height(EditorGUIUtility.singleLineHeight)))
+                                {
+                                    EditorGUILayout.LabelField(new GUIContent("Xmin"), GUILayout.Width(40));
+                                    var leftValueInGameParameterAxis =
+                                        childBlendInfo.LeftXAxisValue *
+                                        (selectedGameParameter.MaxValue - selectedGameParameter.MinValue);
+                                    var newLeftValue = EditorGUILayout.DelayedFloatField(leftValueInGameParameterAxis);
+                                    if (Math.Abs(newLeftValue - leftValueInGameParameterAxis) > 0.0001)
+                                    {
+                                        var newLeftValueInNormalized =
+                                            newLeftValue / (selectedGameParameter.MaxValue - selectedGameParameter.MinValue);
+                                        currentSelectData.blendContainerTrackList[i]
+                                            .ResizeChildBlendInfoRect(currentSelectChildBlendInfoIndex, newLeftValueInNormalized, true);
+                                    }
+                                    EditorGUILayout.LabelField("Xmax", GUILayout.Width(40));
+                                    var rightValueInGameParameterAxis =
+                                        childBlendInfo.RightXAxisValue *
+                                        (selectedGameParameter.MaxValue - selectedGameParameter.MinValue);
+                                    var newRightValue = EditorGUILayout.DelayedFloatField(rightValueInGameParameterAxis);
+                                    if (Math.Abs(newRightValue - rightValueInGameParameterAxis) > 0.0001)
+                                    {
+                                        var newRightValueInNormalized =
+                                            newRightValue / (selectedGameParameter.MaxValue - selectedGameParameter.MinValue);
+                                        currentSelectData.blendContainerTrackList[i]
+                                            .ResizeChildBlendInfoRect(currentSelectChildBlendInfoIndex, newRightValueInNormalized, false);
+                                    }
+
+                                    EditorGUILayout.LabelField("Left EaseType", GUILayout.Width(90));
+                                    EditorGUI.BeginDisabledGroup(childBlendInfo.LeftBlendXAxisValue <= childBlendInfo.LeftXAxisValue);
+                                    childBlendInfo.leftEaseType =
+                                        (EaseType)EditorGUILayout.EnumPopup(childBlendInfo.leftEaseType);
+                                    EditorGUI.EndDisabledGroup();
+
+                                    EditorGUILayout.LabelField("Right EaseType", GUILayout.Width(90));
+                                    EditorGUI.BeginDisabledGroup(childBlendInfo.RightBlendXAxisValue >= childBlendInfo.RightXAxisValue);
+                                    childBlendInfo.rightEaseType =
+                                        (EaseType)EditorGUILayout.EnumPopup(childBlendInfo.rightEaseType);
+                                    EditorGUI.EndDisabledGroup();
+                                }
+                            }
+
+                            if (i != currentSelectData.blendContainerTrackList.Count - 1)
+                            {
+                                EditorGUILayout.Space();
+                            }
+                        }
+
+                        EditorGUILayout.EndScrollView();
+
+                    }
+
+                    GUI.color = backgroundBoxColor;
+                    using (new EditorGUILayout.VerticalScope("box"))
+                    {
+                        GUI.color = preGUIColor;
+                        DrawGeneralSettingsSidePage(currentSelectData);
+                    }
+                    EditorGUILayout.EndHorizontal();
+                    break;
+                case PropertyEditorTab.Effects:
+                    DrawEffectsSetting(currentSelectData);
+                    break;
+                case PropertyEditorTab.Attenuation:
+                    Draw3DSetting(currentSelectData);
+                    break;
+                case PropertyEditorTab.RTPC:
+                    DrawRTPCSettingUnit(currentSelectData);
+                    break;
+                case PropertyEditorTab.States:
+                    DrawStateSettingUnit(currentSelectData);
+                    break;
+                case PropertyEditorTab.OtherSetting:
+                    DrawOtherSettingUnit(currentSelectData);
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+            EditorGUI.EndDisabledGroup();
+        }
+
+        private void DrawBlendContainerChildrenBlendInfo(Rect graphDataRect, BlendContainerTrack blendTrack, int trackInListOder)
+        {
+            if (blendContainerTracksDepthInfoList[trackInListOder] == null) blendContainerTracksDepthInfoList[trackInListOder] = new List<int>();
+            if (blendContainerTracksDepthInfoList[trackInListOder].Count != blendTrack.ChildrenBlendInfoListCount)
+            {
+                blendContainerTracksDepthInfoList[trackInListOder].Clear();
+                for (int i = 0; i < blendTrack.ChildrenBlendInfoListCount; i++)
+                {
+                    blendContainerTracksDepthInfoList[trackInListOder].Add(i);
+                }
+            }
+
+            var trackDepthInfo = blendContainerTracksDepthInfoList[trackInListOder];
+            //复制一份深度表，通过每轮遍历从复制表中寻找最小值，通过最小值获取其序列从而获取对应的ChildBlenInfo，并且从复制表中删除最小值
+            var depthInfoCopy = trackDepthInfo.ToList();
+
+            var preColor = GUI.color;
+
+            var mousePositionInGraphRect = Rect.PointToNormalized(graphDataRect, Event.current.mousePosition);
+            //拖出界面外则取消选中
+            if ((mousePositionInGraphRect.x <= 0 || mousePositionInGraphRect.x >= 1) && Event.current.type == EventType.MouseDrag)
+            {
+                var selectedChildBlendInfoOrder =
+                    blendContainerTracksDepthInfoList[trackInListOder].FindIndex(x => x == -1);
+                if (selectedChildBlendInfoOrder != -1)
+                {
+                    if (leftAnchorRectDragInBlendContainerGraph && mousePositionInGraphRect.x <= 0)
+                    {
+                        blendTrack.ResizeChildBlendInfoRect(selectedChildBlendInfoOrder, 0, true);
+                    }
+
+                    if (rightAnchorRectDragInBlendContainerGraph && mousePositionInGraphRect.x >= 1)
+                    {
+                        blendTrack.ResizeChildBlendInfoRect(selectedChildBlendInfoOrder, 1, false);
+                    }
+
+                    for (int j = 0; j < blendContainerTracksDepthInfoList[trackInListOder].Count; j++)
+                    {
+                        blendContainerTracksDepthInfoList[trackInListOder][j]++;
+                    }
+
+                    leftAnchorRectDragInBlendContainerGraph = false;
+                    rightAnchorRectDragInBlendContainerGraph = false;
+                    Event.current.Use();
+                }
+            }
+
+            using (new GUI.GroupScope(graphDataRect))
+            {
+                graphDataRect.x = graphDataRect.y = 0;
+
+                for (var index = 0; index < blendTrack.ChildrenBlendInfoListCount; index++)
+                {
+                    //ChildBlendInfo的绘制顺序并非是ChildrenBlendInfoList的顺序（其顺序请查看定义）
+                    //而是通过一个额外的深度表的顺序进行绘制，这很重要，可以让鼠标点击后将元素置于首位以确保下次点击相同的重叠区块时依旧是选中之前的元素
+                    //从而获得正常的点击体验
+                    var currentChildBlendInfoOrder = trackDepthInfo.FindIndex(x => x == depthInfoCopy.Min());
+                    if (currentChildBlendInfoOrder == -1)
+                    {
+                        //当后续点击操作导致某ChildBlendInfo的深度发生变化时，Copy的列表没有更新，可能会导致数值对应不上
+                        //可以直接跳过至下一次循环来处理
+                        depthInfoCopy.Remove(depthInfoCopy.Min());
+                        Repaint();
+                        continue;
+                    }
+                    depthInfoCopy.Remove(depthInfoCopy.Min());
+                    var childBlendInfo = blendTrack.GetChildBlendInfo(currentChildBlendInfoOrder);
+
+                    var childAudioComponent =
+                        AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(childBlendInfo.childId);
+                    if (childAudioComponent == null)
+                    {
+                        AudioEditorDebugLog.LogError("数据出错");
+                        blendTrack.RemoveChildBlendInfo(currentChildBlendInfoOrder);
+                        Repaint();
+                        return;
+                    }
+                    var childRect = Rect.zero;
+                    childRect.x = graphDataRect.width * childBlendInfo.LeftXAxisValue;
+                    childRect.width = graphDataRect.width * (childBlendInfo.RightXAxisValue - childBlendInfo.LeftXAxisValue);
+                    childRect.height = graphDataRect.height;
+
+                    var leftAnchorRect = childRect;
+                    leftAnchorRect.width = 3f;
+                    EditorGUIUtility.AddCursorRect(leftAnchorRect, MouseCursor.ResizeHorizontal);
+
+                    var rightAnchorRect = childRect;
+                    rightAnchorRect.xMin = rightAnchorRect.xMax - 3f;
+                    EditorGUIUtility.AddCursorRect(rightAnchorRect, MouseCursor.ResizeHorizontal);
+
+
+                    //为ChildRect定义事件行为
+                    //左锚点拖动
+                    var e = Event.current;
+                    if (!leftAnchorRectDragInBlendContainerGraph && leftAnchorRect.Contains(e.mousePosition) && e.type == EventType.MouseDown)
+                    {
+                        GUIUtility.keyboardControl = -1;
+                        myTreeViews[editorViewData.ProjectExplorerTabIndex].EndRename();
+
+                        //如果有已选中的则全员后移一位
+                        if (trackDepthInfo.Exists(x => x == -1))
+                        {
+                            // trackDepthInfo.ForEach((x)=> x+=1);
+                            for (int j = 0; j < trackDepthInfo.Count; j++)
+                            {
+                                trackDepthInfo[j]++;
+                            }
+                        }
+                        trackDepthInfo[currentChildBlendInfoOrder] = -1;
+
+                        rightAnchorRectDragInBlendContainerGraph = false;
+                        leftAnchorRectDragInBlendContainerGraph = true;
+                        e.Use();
+                    }
+
+                    if (leftAnchorRectDragInBlendContainerGraph && graphDataRect.Contains(e.mousePosition) &&
+                        trackDepthInfo[currentChildBlendInfoOrder] == -1 && e.type == EventType.MouseDrag)
+                    {
+                        blendTrack.ResizeChildBlendInfoRect(currentChildBlendInfoOrder, mousePositionInGraphRect.x, true);
+                        e.Use();
+                    }
+
+                    if (leftAnchorRectDragInBlendContainerGraph && e.type == EventType.MouseUp)
+                    {
+                        leftAnchorRectDragInBlendContainerGraph = false;
+                        e.Use();
+                    }
+
+                    //右锚点拖动
+                    if (!rightAnchorRectDragInBlendContainerGraph && rightAnchorRect.Contains(e.mousePosition) && e.type == EventType.MouseDown)
+                    {
+                        GUIUtility.keyboardControl = -1;
+                        myTreeViews[editorViewData.ProjectExplorerTabIndex].EndRename();
+
+                        //如果有已选中的则全员后移一位
+                        if (trackDepthInfo.Exists(x => x == -1))
+                        {
+                            trackDepthInfo.ForEach((x) => x += 1);
+                            for (int j = 0; j < trackDepthInfo.Count; j++)
+                            {
+                                trackDepthInfo[j]++;
+                            }
+                        }
+                        trackDepthInfo[currentChildBlendInfoOrder] = -1;
+
+                        leftAnchorRectDragInBlendContainerGraph = false;
+                        rightAnchorRectDragInBlendContainerGraph = true;
+                        e.Use();
+                    }
+
+                    if (rightAnchorRectDragInBlendContainerGraph && graphDataRect.Contains(e.mousePosition) &&
+                        trackDepthInfo[currentChildBlendInfoOrder] == -1 && e.type == EventType.MouseDrag)
+                    {
+                        blendTrack.ResizeChildBlendInfoRect(currentChildBlendInfoOrder, mousePositionInGraphRect.x, false);
+                        e.Use();
+                    }
+
+                    if (rightAnchorRectDragInBlendContainerGraph && e.type == EventType.MouseUp)
+                    {
+                        rightAnchorRectDragInBlendContainerGraph = false;
+                        e.Use();
+                    }
+                }
+
+                //所有锚点的相应优先级比选中整体的优先级更高，所以需要锚点的事件相应遍历结束再遍历选中整体的事件
+                depthInfoCopy = trackDepthInfo.ToList();
+                for (var index = 0; index < blendTrack.ChildrenBlendInfoListCount; index++)
+                {
+                    var currentChildBlendInfoOrder = trackDepthInfo.FindIndex(x => x == depthInfoCopy.Min());
+                    if (currentChildBlendInfoOrder == -1)
+                    {
+                        //当后续点击操作导致某ChildBlendInfo的深度发生变化时，Copy的列表没有更新，可能会导致数值对应不上
+                        //可以直接跳过至下一次循环来处理
+                        depthInfoCopy.Remove(depthInfoCopy.Min());
+                        Repaint();
+                        continue;
+                    }
+
+                    depthInfoCopy.Remove(depthInfoCopy.Min());
+                    var childBlendInfo = blendTrack.GetChildBlendInfo(currentChildBlendInfoOrder);
+
+                    var childRect = Rect.zero;
+                    childRect.x = graphDataRect.width * childBlendInfo.LeftXAxisValue;
+                    childRect.width = graphDataRect.width *
+                                      (childBlendInfo.RightXAxisValue - childBlendInfo.LeftXAxisValue);
+                    childRect.height = graphDataRect.height;
+
+                    //整体移动
+                    var e = Event.current;
+                    if (childRect.Contains(e.mousePosition) && e.type == EventType.MouseDown)
+                    {
+                        GUIUtility.keyboardControl = -1;
+                        myTreeViews[editorViewData.ProjectExplorerTabIndex].EndRename();
+
+
+                        //如果有已选中的则全员后移一位
+                        if (trackDepthInfo.Exists(x => x == -1))
+                        {
+                            //trackDepthInfo.ForEach((x) => x += 1);
+                            for (int j = 0; j < trackDepthInfo.Count; j++)
+                            {
+                                trackDepthInfo[j]++;
+                            }
+                        }
+                        trackDepthInfo[currentChildBlendInfoOrder] = -1;
+                        leftAnchorRectDragInBlendContainerGraph = false;
+                        rightAnchorRectDragInBlendContainerGraph = false;
+                        e.Use();
+                    }
+
+                    if (graphDataRect.Contains(e.mousePosition) && trackDepthInfo[currentChildBlendInfoOrder] == -1 && e.type == EventType.MouseDrag)
+                    {
+                        blendTrack.DoChildBlendInfoTransform(currentChildBlendInfoOrder, e.delta.x / graphDataRect.width);
+                        Event.current.Use();
+                        Repaint();
+                    }
+
+                    if (childRect.Contains(e.mousePosition) && trackDepthInfo[currentChildBlendInfoOrder] == -1 &&
+                        e.type == EventType.KeyDown && e.keyCode == KeyCode.Delete)
+                    {
+                        trackDepthInfo.RemoveAt(currentChildBlendInfoOrder);
+                        blendTrack.RemoveChildBlendInfo(currentChildBlendInfoOrder);
+                        leftAnchorRectDragInBlendContainerGraph = false;
+                        rightAnchorRectDragInBlendContainerGraph = false;
+                        e.Use();
+                        Repaint();
+                    }
+
+                    //设定在childRect上右键无法打开新建菜单
+                    if (childRect.Contains(e.mousePosition) && e.type == EventType.ContextClick)
+                    {
+                        e.Use();
+                    }
+                }
+
+
+                //绘制Rect的表现,深度优先级高的后绘制，以保证其在优先级低的前方
+                depthInfoCopy = trackDepthInfo.ToList();
+                for (var index = 0; index < blendTrack.ChildrenBlendInfoListCount; index++)
+                {
+                    var currentChildBlendInfoOrder = trackDepthInfo.FindIndex(x => x == depthInfoCopy.Max());
+                    if (currentChildBlendInfoOrder == -1)
+                    {
+                        //当后续点击操作导致某ChildBlendInfo的深度发生变化时，Copy的列表没有更新，可能会导致数值对应不上
+                        //可以直接跳过至下一次循环来处理
+                        depthInfoCopy.Remove(depthInfoCopy.Max());
+                        Repaint();
+                        continue;
+                    }
+
+                    depthInfoCopy.Remove(depthInfoCopy.Max());
+                    var childBlendInfo = blendTrack.GetChildBlendInfo(currentChildBlendInfoOrder);
+
+                    var childAudioComponent =
+                        AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(childBlendInfo.childId);
+                    if (childAudioComponent == null)
+                    {
+                        AudioEditorDebugLog.LogError("数据出错");
+                        blendTrack.RemoveChildBlendInfo(currentChildBlendInfoOrder);
+                        Repaint();
+                        return;
+                    }
+
+                    var childRect = Rect.zero;
+                    childRect.x = graphDataRect.width * childBlendInfo.LeftXAxisValue;
+                    childRect.width = graphDataRect.width * (childBlendInfo.RightXAxisValue - childBlendInfo.LeftXAxisValue);
+                    childRect.height = graphDataRect.height;
+
+                    var leftAnchorRect = childRect;
+                    leftAnchorRect.width = trackDepthInfo[currentChildBlendInfoOrder] == -1 ? 3f : 1f;
+
+                    var rightAnchorRect = childRect;
+                    rightAnchorRect.xMin = rightAnchorRect.xMax - (trackDepthInfo[currentChildBlendInfoOrder] == -1 ? 3f : 1f);
+
+                    GUI.color = colorRankList[currentChildBlendInfoOrder];
+                    GUI.color = new Color(GUI.color.r, GUI.color.g, GUI.color.b, trackDepthInfo[currentChildBlendInfoOrder] == -1 ? 0.3f : 0.15f);
+
+                    GUI.DrawTexture(childRect, EditorGUIUtility.whiteTexture);
+
+                    GUI.color = new Color(GUI.color.r, GUI.color.g, GUI.color.b, trackDepthInfo[currentChildBlendInfoOrder] == -1 ? 0.8f : 0.5f);
+                    GUI.DrawTexture(leftAnchorRect, EditorGUIUtility.whiteTexture);
+                    GUI.DrawTexture(rightAnchorRect, EditorGUIUtility.whiteTexture);
+                    GUI.color = preColor;
+
+                    if (childBlendInfo.LeftBlendXAxisValue > childBlendInfo.LeftXAxisValue)
+                    {
+                        var blendTransitionRect = graphDataRect;
+                        blendTransitionRect.xMin = childBlendInfo.LeftXAxisValue * graphDataRect.width;
+                        blendTransitionRect.xMax = childBlendInfo.LeftBlendXAxisValue * graphDataRect.width;
+                        using (new GUI.GroupScope(blendTransitionRect))
+                        {
+                            var rect = blendTransitionRect;
+                            rect.x = rect.y = 0;
+                            AudioCurveRendering.DrawCurve(rect, f =>
+                            {
+                                //var value = Mathf.Clamp01(Easing.Get(childBlendInfo.leftEaseType).Invoke(f));
+                                var value = childBlendInfo.GetValue(
+                                    childBlendInfo.LeftXAxisValue + f *
+                                    (childBlendInfo.LeftBlendXAxisValue - childBlendInfo.LeftXAxisValue));
+                                var normalizedValue = (value - 0.5f) / 0.5f;
+                                return normalizedValue;
+                            }, colorRankList[currentChildBlendInfoOrder]);
+                        }
+                    }
+
+                    if (childBlendInfo.RightBlendXAxisValue < childBlendInfo.RightXAxisValue)
+                    {
+                        var blendTransitionRect = graphDataRect;
+                        blendTransitionRect.xMin = childBlendInfo.RightBlendXAxisValue * graphDataRect.width;
+                        blendTransitionRect.xMax = childBlendInfo.RightXAxisValue * graphDataRect.width;
+                        using (new GUI.GroupScope(blendTransitionRect))
+                        {
+                            var rect = blendTransitionRect;
+                            rect.x = rect.y = 0;
+                            AudioCurveRendering.DrawCurve(rect, f =>
+                            {
+                                //var value = Mathf.Clamp01(Easing.Get(childBlendInfo.rightEaseType).Invoke(f));
+                                var value = childBlendInfo.GetValue(
+                                    childBlendInfo.RightBlendXAxisValue + f *
+                                    (childBlendInfo.RightXAxisValue - childBlendInfo.RightBlendXAxisValue));
+
+                                var normalizedValue = (value - 0.5f) / 0.5f;
+                                //normalizedValue *= -1;
+                                return normalizedValue;
+                            }, colorRankList[currentChildBlendInfoOrder]);
+                        }
+                    }
+
+                    EditorGUI.LabelField(childRect, new GUIContent(childAudioComponent.name), whiteLableStyleSkin);
+                }
+
+            }
+
+            GUI.color = preColor;
+        }
+
+        #endregion
+
         private void DrawEventPropertyEditor(int id)
         {
             var currentSelectData = GetCurrentSelectData(id, AEComponentType.Event) as AEEvent;
+            if (currentSelectData == null) return;
 
             DrawNameUnit(currentSelectData);
             if (GUILayout.Button("新建 >>", GUILayout.ExpandWidth(false)))
@@ -1630,13 +2669,13 @@ namespace ypzxAudioEditor
                 {
                     if (whichEventUnitSelect == i)
                     {
-                        GUI.color = rectSelectedColor;
+                        GUI.color = RectSelectedColor;
                     }
                     // GUI.color = whichEventUnitSelect == i ? rectSelectedColor : backgroundBoxColor;
                     using (new EditorGUILayout.HorizontalScope("box"))
                     {
                         GUI.color = preGUIColor;
-                        var newEventType = (AEEventType)EditorGUILayout.Popup((int)currentSelectData.eventList[i].type, EventTpyeNames, GUILayout.Width((position.width - CurrentHorizontalSpliterHeight) / 5 - 10));
+                        var newEventType = (AEEventType)EditorGUILayout.Popup((int)currentSelectData.eventList[i].type, eventTypeNames, GUILayout.Width((position.width - CurrentHorizontalSpliterHeight) / 5 - 10));
                         if (newEventType != currentSelectData.eventList[i].type)
                         {
                             currentSelectData.eventList[i].type = newEventType;
@@ -1653,16 +2692,22 @@ namespace ypzxAudioEditor
                             case AEEventType.ResumeAll:
                             case AEEventType.Stop:
                             case AEEventType.StopAll:
+                                //case AEEventType.SetToPreviousStep:
                                 var targetId = currentSelectData.eventList[i].targetID;
                                 var targetData = AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(targetId);
-                                if (targetData == null)
-                                {
-                                    targetId = currentSelectData.eventList[i].targetID = -1;
-                                }
-                                var showName = targetId == -1 ? "null" : AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(targetId).name;
+                                //if (targetData == null)
+                                //{
+                                //    targetId = currentSelectData.eventList[i].targetID = -1;
+                                //}
+                                var showName = targetId == -1 ? "null" : targetData == null ? "missing" : targetData.name;
                                 using (new EditorGUI.DisabledGroupScope(true))
                                 {
+                                    if (targetData == null && targetId != -1)
+                                    {
+                                        GUI.color = Color.red;
+                                    }
                                     EditorGUILayout.TextField(showName, GUILayout.ExpandWidth(true));
+                                    GUI.color = preGUIColor;
                                 }
                                 var buttonRect = EditorGUILayout.GetControlRect(GUILayout.Width(50));
                                 EditorGUI.BeginDisabledGroup(currentSelectData.eventList[i].type == AEEventType.StopAll || currentSelectData.eventList[i].type == AEEventType.PauseAll || currentSelectData.eventList[i].type == AEEventType.ResumeAll);
@@ -1678,14 +2723,19 @@ namespace ypzxAudioEditor
                             case AEEventType.SetSwitch:
                                 var switchID = currentSelectData.eventList[i].targetID;
                                 var showSwitchName = "null";
+                                var selectSwitch = AudioEditorManager.GetAEComponentDataByID<Switch>(switchID);
                                 if (currentSelectData.eventList[i].targetID != -1)
                                 {
-                                    var selectSwitch = AudioEditorManager.GetAEComponentDataByID<Switch>(switchID);
-                                    showSwitchName = selectSwitch.name;
+                                    showSwitchName = selectSwitch == null ? "missing" : selectSwitch.name;
                                 }
                                 using (new EditorGUI.DisabledGroupScope(true))
                                 {
+                                    if (selectSwitch == null && currentSelectData.eventList[i].targetID != -1)
+                                    {
+                                        GUI.color = Color.red;
+                                    }
                                     EditorGUILayout.TextField(showSwitchName, GUILayout.ExpandWidth(true));
+                                    GUI.color = preGUIColor;
                                 }
 
                                 buttonRect = EditorGUILayout.GetControlRect(GUILayout.Width(50));
@@ -1700,14 +2750,19 @@ namespace ypzxAudioEditor
                             case AEEventType.SetState:
                                 var stateID = currentSelectData.eventList[i].targetID;
                                 var showStateName = "null";
+                                var selectState = AudioEditorManager.GetAEComponentDataByID<State>(stateID);
                                 if (currentSelectData.eventList[i].targetID != -1)
                                 {
-                                    var selectState = AudioEditorManager.GetAEComponentDataByID<State>(stateID);
-                                    showStateName = selectState.name;
+                                    showStateName = selectState == null ? "missing" : selectState.name;
                                 }
                                 using (new EditorGUI.DisabledGroupScope(true))
                                 {
+                                    if (showStateName == null && currentSelectData.eventList[i].targetID != -1)
+                                    {
+                                        GUI.color = Color.red;
+                                    }
                                     EditorGUILayout.TextField(showStateName, GUILayout.ExpandWidth(true));
+                                    GUI.color = preGUIColor;
                                 }
 
                                 buttonRect = EditorGUILayout.GetControlRect(GUILayout.Width(50));
@@ -1773,41 +2828,279 @@ namespace ypzxAudioEditor
                 GUI.color = preGUIColor;
                 if (whichEventUnitSelect >= 0 && whichEventUnitSelect < currentSelectData.eventList.Count)
                 {
-                    switch (currentSelectData.eventList[whichEventUnitSelect].type)
+                    var eventUnit = currentSelectData.eventList[whichEventUnitSelect];
+                    switch (eventUnit.type)
                     {
                         case AEEventType.Play:
-                            currentSelectData.eventList[whichEventUnitSelect].probability = EditorGUILayout.IntSlider(new GUIContent("Probability", "触发概率"),
-                                currentSelectData.eventList[whichEventUnitSelect].probability, 0, 100);
+                            var newTriggerType =
+                               (AEEventTriggerType)EditorGUILayout.EnumPopup(new GUIContent("Trigger Type"),
+                                   eventUnit.triggerType);
+                            if (newTriggerType != eventUnit.triggerType)
+                            {
+                                eventUnit.triggerType = newTriggerType;
+                                eventUnit.triggerData = 0;
+                                eventUnit.scope = AEEventScope.GameObject;
+                            }
+                            using (new EditorGUI.IndentLevelScope())
+                            {
+                                switch (eventUnit.triggerType)
+                                {
+                                    case AEEventTriggerType.Instance:
+                                        break;
+                                    case AEEventTriggerType.Delay:
+                                        eventUnit.triggerData =
+                                            EditorGUILayout.FloatField("Delay Time", eventUnit.triggerData);
+                                        EditorGUILayout.Space();
+                                        break;
+                                    case AEEventTriggerType.Trigger:
+                                        EditorGUILayout.BeginHorizontal();
+                                        var targetAudioComponent =
+                                            AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(
+                                                Mathf.RoundToInt(eventUnit.triggerData));
+                                        var showName = targetAudioComponent == null ? "null" : targetAudioComponent.name;
+                                        using (new EditorGUI.DisabledGroupScope(true))
+                                        {
+                                            EditorGUILayout.TextField("Target", showName, GUILayout.ExpandWidth(true));
+                                        }
+                                        var buttonRect = EditorGUILayout.GetControlRect(GUILayout.Width(50));
+                                        if (EditorGUI.DropdownButton(buttonRect, new GUIContent("更改"), FocusType.Passive))
+                                        {
+                                            PopupWindow.Show(buttonRect, new SelectPopupWindow(WindowOpenFor.SelectAudio, (selectedID) =>
+                                            {
+                                                eventUnit.triggerData = selectedID;
+                                            }));
+                                        }
+                                        EditorGUILayout.EndHorizontal();
+                                        eventUnit.triggerOccasion = (AEEventTriggerOccasion)EditorGUILayout.EnumPopup(new GUIContent("Play At"),
+                                            eventUnit.triggerOccasion);
+                                        eventUnit.scope = (AEEventScope)EditorGUILayout.EnumPopup(new GUIContent("Scope", "作用范围"),
+                                            eventUnit.scope);
+                                        EditorGUILayout.Space();
+                                        break;
+                                    default:
+                                        throw new ArgumentOutOfRangeException();
+                                }
+                            }
+
+                            eventUnit.probability = EditorGUILayout.IntSlider(new GUIContent("Probability", "触发概率"),
+                                eventUnit.probability, 0, 100);
+                            eventUnit.FadeTime =
+                                EditorGUILayout.FloatField("FadeIn Time",
+                                    eventUnit.FadeTime);
+                            eventUnit.fadeType =
+                                (EaseType)EditorGUILayout.EnumPopup("FadeIn Type",
+                                    eventUnit.fadeType);
                             break;
                         case AEEventType.Pause:
-                            currentSelectData.eventList[whichEventUnitSelect].scope = (Scope)EditorGUILayout.EnumPopup(new GUIContent("Scope", "作用范围"),
-                                currentSelectData.eventList[whichEventUnitSelect].scope);
+                            eventUnit.scope = (AEEventScope)EditorGUILayout.EnumPopup(new GUIContent("Scope", "作用范围"),
+                                eventUnit.scope);
+                            eventUnit.FadeTime =
+                                EditorGUILayout.FloatField("FadeOut Time",
+                                    eventUnit.FadeTime);
+                            eventUnit.fadeType =
+                                (EaseType)EditorGUILayout.EnumPopup("FadeOut Type",
+                                    eventUnit.fadeType);
                             break;
                         case AEEventType.PauseAll:
-                            currentSelectData.eventList[whichEventUnitSelect].scope = (Scope)EditorGUILayout.EnumPopup(new GUIContent("Scope", "作用范围"),
-                                currentSelectData.eventList[whichEventUnitSelect].scope);
+                            eventUnit.scope = (AEEventScope)EditorGUILayout.EnumPopup(new GUIContent("Scope", "作用范围"),
+                                eventUnit.scope);
+                            eventUnit.FadeTime =
+                                EditorGUILayout.FloatField("FadeOut Time",
+                                    eventUnit.FadeTime);
+                            eventUnit.fadeType =
+                                (EaseType)EditorGUILayout.EnumPopup("FadeOut Type",
+                                    eventUnit.fadeType);
                             break;
                         case AEEventType.Resume:
-                            currentSelectData.eventList[whichEventUnitSelect].scope = (Scope)EditorGUILayout.EnumPopup(new GUIContent("Scope", "作用范围"),
-                                currentSelectData.eventList[whichEventUnitSelect].scope);
+                            eventUnit.scope = (AEEventScope)EditorGUILayout.EnumPopup(new GUIContent("Scope", "作用范围"),
+                                eventUnit.scope);
+                            eventUnit.FadeTime =
+                                EditorGUILayout.FloatField("FadeIn Time",
+                                    eventUnit.FadeTime);
+                            eventUnit.fadeType =
+                                (EaseType)EditorGUILayout.EnumPopup("FadeIn Type",
+                                    eventUnit.fadeType);
                             break;
                         case AEEventType.ResumeAll:
-                            currentSelectData.eventList[whichEventUnitSelect].scope = (Scope)EditorGUILayout.EnumPopup(new GUIContent("Scope", "作用范围"),
-                                currentSelectData.eventList[whichEventUnitSelect].scope);
+                            eventUnit.scope = (AEEventScope)EditorGUILayout.EnumPopup(new GUIContent("Scope", "作用范围"),
+                                eventUnit.scope);
+                            eventUnit.FadeTime =
+                                EditorGUILayout.FloatField("FadeIn Time",
+                                    eventUnit.FadeTime);
+                            eventUnit.fadeType =
+                                (EaseType)EditorGUILayout.EnumPopup("FadeIn Type",
+                                    eventUnit.fadeType);
                             break;
                         case AEEventType.Stop:
-                            currentSelectData.eventList[whichEventUnitSelect].scope = (Scope)EditorGUILayout.EnumPopup(new GUIContent("Scope", "作用范围"),
-                                currentSelectData.eventList[whichEventUnitSelect].scope);
+
+                            newTriggerType = (AEEventTriggerType)EditorGUILayout.EnumPopup(new GUIContent("Trigger Type"),
+                                eventUnit.triggerType);
+                            if (newTriggerType != eventUnit.triggerType)
+                            {
+                                eventUnit.triggerType = newTriggerType;
+                                eventUnit.triggerData = 0;
+                                eventUnit.scope = AEEventScope.GameObject;
+                            }
+
+                            using (new EditorGUI.IndentLevelScope())
+                            {
+                                switch (eventUnit.triggerType)
+                                {
+                                    case AEEventTriggerType.Instance:
+                                        break;
+                                    case AEEventTriggerType.Delay:
+                                        eventUnit.triggerData =
+                                            EditorGUILayout.FloatField("Delay Time", eventUnit.triggerData);
+                                        EditorGUILayout.Space();
+                                        break;
+                                    case AEEventTriggerType.Trigger:
+                                        EditorGUILayout.BeginHorizontal();
+                                        var targetAudioComponent =
+                                            AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(
+                                                Mathf.RoundToInt(eventUnit.triggerData));
+                                        var showName = targetAudioComponent == null ? "null" : targetAudioComponent.name;
+                                        using (new EditorGUI.DisabledGroupScope(true))
+                                        {
+                                            EditorGUILayout.TextField("Target", showName, GUILayout.ExpandWidth(true));
+                                        }
+                                        var buttonRect = EditorGUILayout.GetControlRect(GUILayout.Width(50));
+                                        if (EditorGUI.DropdownButton(buttonRect, new GUIContent("更改"), FocusType.Passive))
+                                        {
+                                            PopupWindow.Show(buttonRect, new SelectPopupWindow(WindowOpenFor.SelectAudio, (selectedID) =>
+                                            {
+                                                eventUnit.triggerData = selectedID;
+                                            }));
+                                        }
+                                        EditorGUILayout.EndHorizontal();
+                                        eventUnit.triggerOccasion = (AEEventTriggerOccasion)EditorGUILayout.EnumPopup(new GUIContent("Play At"),
+                                            eventUnit.triggerOccasion);
+                                        EditorGUILayout.Space();
+                                        break;
+                                    default:
+                                        throw new ArgumentOutOfRangeException();
+                                }
+                            }
+                            eventUnit.scope = (AEEventScope)EditorGUILayout.EnumPopup(new GUIContent("Scope", "作用范围"),
+                                eventUnit.scope);
+                            eventUnit.FadeTime =
+                                EditorGUILayout.FloatField("FadeOut Time",
+                                    eventUnit.FadeTime);
+                            eventUnit.fadeType =
+                                (EaseType)EditorGUILayout.EnumPopup("FadeOut Type",
+                                    eventUnit.fadeType);
                             break;
                         case AEEventType.StopAll:
-                            currentSelectData.eventList[whichEventUnitSelect].scope = (Scope)EditorGUILayout.EnumPopup(new GUIContent("Scope", "作用范围"),
-                                currentSelectData.eventList[whichEventUnitSelect].scope);
+                            eventUnit.scope = (AEEventScope)EditorGUILayout.EnumPopup(new GUIContent("Scope", "作用范围"),
+                                eventUnit.scope);
+                            eventUnit.FadeTime =
+                                EditorGUILayout.FloatField("FadeOut Time",
+                                    eventUnit.FadeTime);
+                            eventUnit.fadeType =
+                                (EaseType)EditorGUILayout.EnumPopup("FadeOut Type",
+                                    eventUnit.fadeType);
                             break;
                         case AEEventType.SetSwitch:
-                            EditorGUILayout.Space();
+                            newTriggerType =
+                                (AEEventTriggerType)EditorGUILayout.EnumPopup(new GUIContent("Trigger Type"),
+                                    eventUnit.triggerType);
+                            if (newTriggerType != eventUnit.triggerType)
+                            {
+                                eventUnit.triggerType = newTriggerType;
+                                eventUnit.triggerData = 0;
+                                eventUnit.scope = AEEventScope.GameObject;
+                            }
+
+                            using (new EditorGUI.IndentLevelScope())
+                            {
+                                switch (eventUnit.triggerType)
+                                {
+                                    case AEEventTriggerType.Instance:
+                                        break;
+                                    case AEEventTriggerType.Delay:
+                                        eventUnit.triggerData =
+                                            EditorGUILayout.FloatField("Delay Time", eventUnit.triggerData);
+                                        EditorGUILayout.Space();
+                                        break;
+                                    case AEEventTriggerType.Trigger:
+                                        EditorGUILayout.BeginHorizontal();
+                                        var targetAudioComponent =
+                                            AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(
+                                                Mathf.RoundToInt(eventUnit.triggerData));
+                                        var showName = targetAudioComponent == null ? "null" : targetAudioComponent.name;
+                                        using (new EditorGUI.DisabledGroupScope(true))
+                                        {
+                                            EditorGUILayout.TextField("Target", showName, GUILayout.ExpandWidth(true));
+                                        }
+                                        var buttonRect = EditorGUILayout.GetControlRect(GUILayout.Width(50));
+                                        if (EditorGUI.DropdownButton(buttonRect, new GUIContent("更改"), FocusType.Passive))
+                                        {
+                                            PopupWindow.Show(buttonRect, new SelectPopupWindow(WindowOpenFor.SelectAudio, (selectedID) =>
+                                            {
+                                                eventUnit.triggerData = selectedID;
+                                            }));
+                                        }
+                                        EditorGUILayout.EndHorizontal();
+                                        eventUnit.triggerOccasion = (AEEventTriggerOccasion)EditorGUILayout.EnumPopup(new GUIContent("Play At"),
+                                            eventUnit.triggerOccasion);
+                                        EditorGUILayout.Space();
+                                        break;
+                                    default:
+                                        throw new ArgumentOutOfRangeException();
+                                }
+                            }
+                            eventUnit.scope = (AEEventScope)EditorGUILayout.EnumPopup(new GUIContent("Scope", "作用范围"),
+                                eventUnit.scope);
                             break;
                         case AEEventType.SetState:
-                            EditorGUILayout.Space();
+                            newTriggerType = (AEEventTriggerType)EditorGUILayout.EnumPopup(new GUIContent("Trigger Type"),
+                                eventUnit.triggerType);
+                            if (newTriggerType != eventUnit.triggerType)
+                            {
+                                eventUnit.triggerType = newTriggerType;
+                                eventUnit.triggerData = 0;
+                                eventUnit.scope = AEEventScope.GameObject;
+                            }
+
+                            using (new EditorGUI.IndentLevelScope())
+                            {
+                                switch (eventUnit.triggerType)
+                                {
+                                    case AEEventTriggerType.Instance:
+                                        break;
+                                    case AEEventTriggerType.Delay:
+                                        eventUnit.triggerData =
+                                            EditorGUILayout.FloatField("Delay Time", eventUnit.triggerData);
+                                        EditorGUILayout.Space();
+                                        break;
+                                    case AEEventTriggerType.Trigger:
+                                        EditorGUILayout.BeginHorizontal();
+                                        var targetAudioComponent =
+                                            AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(
+                                                Mathf.RoundToInt(eventUnit.triggerData));
+                                        var showName = targetAudioComponent == null ? "null" : targetAudioComponent.name;
+                                        using (new EditorGUI.DisabledGroupScope(true))
+                                        {
+                                            EditorGUILayout.TextField("Target", showName, GUILayout.ExpandWidth(true));
+                                        }
+                                        var buttonRect = EditorGUILayout.GetControlRect(GUILayout.Width(50));
+                                        if (EditorGUI.DropdownButton(buttonRect, new GUIContent("更改"), FocusType.Passive))
+                                        {
+                                            PopupWindow.Show(buttonRect, new SelectPopupWindow(WindowOpenFor.SelectAudio, (selectedID) =>
+                                            {
+                                                eventUnit.triggerData = selectedID;
+                                            }));
+                                        }
+                                        EditorGUILayout.EndHorizontal();
+                                        eventUnit.triggerOccasion = (AEEventTriggerOccasion)EditorGUILayout.EnumPopup(new GUIContent("Play At"),
+                                            eventUnit.triggerOccasion);
+                                        EditorGUILayout.Space();
+                                        break;
+                                    default:
+                                        throw new ArgumentOutOfRangeException();
+                                }
+                            }
+                            eventUnit.scope = (AEEventScope)EditorGUILayout.EnumPopup(new GUIContent("Scope", "作用范围"),
+                                eventUnit.scope);
                             break;
                         case AEEventType.InstallBank:
                             EditorGUILayout.Space();
@@ -1815,6 +3108,9 @@ namespace ypzxAudioEditor
                         case AEEventType.UnInstallBank:
                             EditorGUILayout.Space();
                             break;
+                        //case AEEventType.SetToPreviousStep:
+                        //    EditorGUILayout.Space();
+                        //    break;
                         default:
                             throw new ArgumentOutOfRangeException();
                     }
@@ -1826,6 +3122,7 @@ namespace ypzxAudioEditor
         private void DrawSwitchGroupPropertyEditor(int id)
         {
             var currentSelectData = GetCurrentSelectData(id, AEComponentType.SwitchGroup) as SwitchGroup;
+            if (currentSelectData == null) return;
 
             DrawNameUnit(currentSelectData);
 
@@ -1885,6 +3182,8 @@ namespace ypzxAudioEditor
         private void DrawStateGroupProperty(int id)
         {
             var currentSelectData = GetCurrentSelectData(id, AEComponentType.StateGroup) as StateGruop;
+            if (currentSelectData == null) return;
+
             DrawNameUnit(currentSelectData);
             EditorGUILayout.Space(EditorGUIUtility.standardVerticalSpacing);
             var buttonrect = EditorGUILayout.GetControlRect(GUILayout.ExpandWidth(false));
@@ -1937,8 +3236,8 @@ namespace ypzxAudioEditor
             GUI.color = preGUIColor;
             EditorGUILayout.EndHorizontal();
 
-            ScorllViewPosition =
-                GUILayout.BeginScrollView(ScorllViewPosition, GUILayout.ExpandHeight(true), GUILayout.ExpandWidth(true));
+            scorllViewPosition =
+                GUILayout.BeginScrollView(scorllViewPosition, GUILayout.ExpandHeight(true), GUILayout.ExpandWidth(true));
             for (int i = 0; i < currentSelectData.customStateTransitionList.Count; i++)
             {
                 GUI.color = backgroundBoxColor;
@@ -1979,10 +3278,11 @@ namespace ypzxAudioEditor
             GUILayout.EndScrollView();
         }
 
-
         private void DrawGameParameterProperty(int id)
         {
             var currentSelectData = GetCurrentSelectData(id, AEComponentType.GameParameter) as GameParameter;
+            if (currentSelectData == null) return;
+
             DrawNameUnit(currentSelectData);
             GUI.color = backgroundBoxColor;
             using (new EditorGUILayout.VerticalScope("box", GUILayout.ExpandWidth(false)))
@@ -2014,11 +3314,10 @@ namespace ypzxAudioEditor
                 case AEComponentType.RandomContainer:
                 case AEComponentType.SequenceContainer:
                 case AEComponentType.SwitchContainer:
+                case AEComponentType.BlendContainer:
+                case AEComponentType.ActorMixer:
                     currentSelectData = AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(id);
                     break;
-                case AEComponentType.BlendContainer:
-                    Debug.LogError("未完成");
-                    return null;
                 case AEComponentType.Event:
                     currentSelectData = AudioEditorManager.GetAEComponentDataByID<AEEvent>(id);
                     break;
@@ -2030,13 +3329,18 @@ namespace ypzxAudioEditor
                     currentSelectData = AudioEditorManager.GetAEComponentDataByID<AEGameSyncs>(id);
                     break;
                 default:
-                    Debug.LogError("id匹配发生错误，请检查");
+                    AudioEditorDebugLog.LogError("id匹配发生错误，请检查");
                     return null;
             }
-            var parent = myTreeModels[data.ProjectExplorerTabIndex].Find(currentSelectData.id).parent as MyTreeElement;
+            if (currentSelectData == null)
+            {
+                AudioEditorDebugLog.LogError("发生严重的数据错误");
+                return null;
+            }
+            var parent = myTreeModels[editorViewData.ProjectExplorerTabIndex].Find(currentSelectData.id).parent as MyTreeElement;
             if (currentSelectData is AEAudioComponent audioComponent)
             {
-                audioComponent.isContianerChild = parent.Type != AEComponentType.Workunit;
+                audioComponent.isContianerChild = parent.type != AEComponentType.WorkUnit;
             }
 
             return currentSelectData;
@@ -2048,7 +3352,7 @@ namespace ypzxAudioEditor
         {
             EditorGUILayout.BeginHorizontal();
             var newPropertyEditorTabIndex = (PropertyEditorTab)
-                GUILayout.Toolbar((int)PropertyEditorTabIndex, PropertyEditorTabNames, EditorStyles.toolbarButton, GUI.ToolbarButtonSize.FitToContents, GUILayout.ExpandWidth(false));
+                GUILayout.Toolbar((int)PropertyEditorTabIndex, propertyEditorTabNames, EditorStyles.toolbarButton, GUI.ToolbarButtonSize.FitToContents, GUILayout.ExpandWidth(false));
             if ((int)newPropertyEditorTabIndex != (int)PropertyEditorTabIndex)
             {
                 PropertyEditorTabIndex = newPropertyEditorTabIndex;
@@ -2063,14 +3367,14 @@ namespace ypzxAudioEditor
                 menu.AddItem(new GUIContent("复制此页数据至/父级"), false, () =>
                 {
                     DataRegisterToUndo();
-                    var parentTreeElement = myTreeModels[data.ProjectExplorerTabIndex].Find(currentSelectData.id).parent;
+                    var parentTreeElement = myTreeModels[editorViewData.ProjectExplorerTabIndex].Find(currentSelectData.id).parent;
                     var tempList = new HashSet<int> { parentTreeElement.id };
                     DeepCopypropertyEditorTabPageData(currentSelectData, tempList);
                 });
                 menu.AddItem(new GUIContent("复制此页数据至/所有同级"), false, () =>
                 {
                     DataRegisterToUndo();
-                    var parentTreeElement = myTreeModels[data.ProjectExplorerTabIndex].Find(currentSelectData.id).parent;
+                    var parentTreeElement = myTreeModels[editorViewData.ProjectExplorerTabIndex].Find(currentSelectData.id).parent;
                     var tempList = new HashSet<int>();
                     foreach (var child in parentTreeElement.children)
                     {
@@ -2081,7 +3385,7 @@ namespace ypzxAudioEditor
                 menu.AddItem(new GUIContent("复制此页数据至/父级及其子级"), false, () =>
                 {
                     DataRegisterToUndo();
-                    var parentTreeElement = myTreeModels[data.ProjectExplorerTabIndex].Find(currentSelectData.id).parent;
+                    var parentTreeElement = myTreeModels[editorViewData.ProjectExplorerTabIndex].Find(currentSelectData.id).parent;
                     var tempList = new HashSet<int>();
                     foreach (var child in parentTreeElement.children)
                     {
@@ -2093,16 +3397,16 @@ namespace ypzxAudioEditor
                 menu.AddItem(new GUIContent("复制此页数据至/所属的工作单元下的所有子级"), false, () =>
                 {
                     DataRegisterToUndo();
-                    var parentworkUnitTreeElement = myTreeModels[data.ProjectExplorerTabIndex].Find(currentSelectData.id).parent;
+                    var parentworkUnitTreeElement = myTreeModels[editorViewData.ProjectExplorerTabIndex].Find(currentSelectData.id).parent;
                     int i = 0;
-                    while ((parentworkUnitTreeElement as MyTreeElement).Type != AEComponentType.Workunit)
+                    while ((parentworkUnitTreeElement as MyTreeElement).type != AEComponentType.WorkUnit)
                     {
                         parentworkUnitTreeElement = parentworkUnitTreeElement.parent;
                         i++;
                         if (i == 100) break;
                     }
                     Debug.Log(parentworkUnitTreeElement.name);
-                    if ((parentworkUnitTreeElement as MyTreeElement) == myTreeModels[data.ProjectExplorerTabIndex].root || i == 100)
+                    if ((parentworkUnitTreeElement as MyTreeElement) == myTreeModels[editorViewData.ProjectExplorerTabIndex].root || i == 100)
                     {
                         Debug.LogWarning("寻找不到上级WorkUnit，请检查");
                         return;
@@ -2127,24 +3431,24 @@ namespace ypzxAudioEditor
             var name = EditorGUILayout.TextField(currentSelectData.name);
             if (name != currentSelectData.name && name != string.Empty)
             {
-                data.GetTreeListElementByID(currentSelectData.id).name = name;
-                myTreeViews[data.ProjectExplorerTabIndex].Reload();
+                GetTreeListElementByID(currentSelectData.id).name = name;
+                myTreeViews[editorViewData.ProjectExplorerTabIndex].Reload();
             }
-            currentSelectData.name = data.GetTreeListElementByID(currentSelectData.id).name;
+            currentSelectData.name = GetTreeListElementByID(currentSelectData.id).name;
             GUILayout.Label("id:");
-            EditorGUI.BeginDisabledGroup(data.ProjectExplorerTabIndex != 1);
+            EditorGUI.BeginDisabledGroup(editorViewData.ProjectExplorerTabIndex != 1);
             var newID = EditorGUILayout.DelayedIntField(currentSelectData.id);
             if (newID != currentSelectData.id)
             {
                 //只能修改Event的id
-                if (data.ProjectExplorerTabIndex == 1)
+                if (editorViewData.ProjectExplorerTabIndex == 1)
                 {
-                    if (myTreeModels[data.ProjectExplorerTabIndex].Find(newID) == null)
+                    if (myTreeModels[editorViewData.ProjectExplorerTabIndex].Find(newID) == null)
                     {
-                        myTreeModels[data.ProjectExplorerTabIndex].Find(currentSelectData.id).id = newID;
+                        myTreeModels[editorViewData.ProjectExplorerTabIndex].Find(currentSelectData.id).id = newID;
                         currentSelectData.id = newID;
-                        data.MyTreeViewStates[data.ProjectExplorerTabIndex].lastClickedID = newID;
-                        myTreeViews[data.ProjectExplorerTabIndex].Reload();
+                        editorViewData.myTreeViewStates[editorViewData.ProjectExplorerTabIndex].lastClickedID = newID;
+                        myTreeViews[editorViewData.ProjectExplorerTabIndex].Reload();
                     }
                 }
             }
@@ -2158,18 +3462,76 @@ namespace ypzxAudioEditor
         private void DrawGeneralSettingUnit(AEAudioComponent currentSelectData)
         {
             EditorGUI.BeginChangeCheck();
-            EditorGUILayout.LabelField("General Setting", BoldLabelStyleSkin.label);
+            EditorGUILayout.LabelField("General Setting", EditorStyles.boldLabel);
             EditorGUI.indentLevel++;
-            currentSelectData.volume = EditorGUILayout.Slider(new GUIContent("Volume", "音量"), currentSelectData.volume, 0f, 1f);
-            currentSelectData.pitch = EditorGUILayout.Slider(new GUIContent("Pitch", "音高"), currentSelectData.pitch, 0, 3);
-            currentSelectData.delayTime =Mathf.Clamp(EditorGUILayout.FloatField(new GUIContent("Delay Time"), currentSelectData.delayTime, GUILayout.ExpandWidth(false)), 0,999); 
+            if (currentSelectData.randomVolume == false)
+            {
+                currentSelectData.volume = EditorGUILayout.Slider(new GUIContent("Volume", "音量"), currentSelectData.volume, 0f, 1f);
+            }
+            else
+            {
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    EditorGUILayout.MinMaxSlider(new GUIContent("Volume", "音量"), ref currentSelectData.minVolume,
+                        ref currentSelectData.maxVolume, 0, 1);
+                    EditorGUI.indentLevel--;
+                    currentSelectData.minVolume = EditorGUILayout.FloatField(currentSelectData.minVolume, GUILayout.Width(50));
+                    currentSelectData.maxVolume = EditorGUILayout.FloatField(currentSelectData.maxVolume, GUILayout.Width(50));
+                    EditorGUI.indentLevel++;
+                }
+            }
+
+            if (GUILayoutUtility.GetLastRect().Contains(Event.current.mousePosition) && Event.current.type == EventType.ContextClick)
+            {
+                var menu = new GenericMenu();
+                menu.AddItem(new GUIContent("random"), currentSelectData.randomVolume, () =>
+                 {
+                     currentSelectData.randomVolume = !currentSelectData.randomVolume;
+                     Repaint();
+                 });
+                menu.ShowAsContext();
+                Event.current.Use();
+            }
+
+            if (currentSelectData.randomPitch == false)
+            {
+                currentSelectData.pitch = EditorGUILayout.Slider(new GUIContent("Pitch", "音高"), currentSelectData.pitch, 0, 3);
+            }
+            else
+            {
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    EditorGUILayout.MinMaxSlider(new GUIContent("Pitch", "音高"), ref currentSelectData.minPitch,
+                        ref currentSelectData.maxPitch, 0, 3);
+                    EditorGUI.indentLevel--;
+                    currentSelectData.minPitch = EditorGUILayout.FloatField(currentSelectData.minPitch, GUILayout.Width(50));
+                    currentSelectData.maxPitch = EditorGUILayout.FloatField(currentSelectData.maxPitch, GUILayout.Width(50));
+                    EditorGUI.indentLevel++;
+                }
+            }
+
+            if (GUILayoutUtility.GetLastRect().Contains(Event.current.mousePosition) && Event.current.type == EventType.ContextClick)
+            {
+                var menu = new GenericMenu();
+                menu.AddItem(new GUIContent("random"), currentSelectData.randomPitch, () =>
+                {
+                    currentSelectData.randomPitch = !currentSelectData.randomPitch;
+                    Repaint();
+                });
+                menu.ShowAsContext();
+                Event.current.Use();
+            }
+
+            EditorGUI.BeginDisabledGroup(currentSelectData is ActorMixer);
+            currentSelectData.delayTime = Mathf.Clamp(EditorGUILayout.FloatField(new GUIContent("Initial Delay"), currentSelectData.delayTime, GUILayout.ExpandWidth(false)), 0, 999);
+            EditorGUI.EndDisabledGroup();
             EditorGUI.indentLevel--;
             EditorGUILayout.Space();
 
             if (EditorGUI.EndChangeCheck())
             {
-                manager.SyncPlayableData(currentSelectData.id,AudioComponentDataChangeType.General);
-                Debug.Log("数据刷新 In GeneralSettingUnit");
+                manager.SyncDataToPlayable(currentSelectData.id, AudioComponentDataChangeType.General);
+                // Debug.Log("数据刷新 In GeneralSettingUnit");
             }
         }
 
@@ -2177,66 +3539,78 @@ namespace ypzxAudioEditor
         {
             EditorGUI.BeginChangeCheck();
 
-            EditorGUILayout.LabelField("Transitions", BoldLabelStyleSkin.label);
+            EditorGUILayout.LabelField("Transitions", EditorStyles.boldLabel);
             EditorGUILayout.BeginHorizontal();
             using (new EditorGUILayout.VerticalScope())
             {
                 EditorGUI.indentLevel++;
                 currentSelectData.fadeIn = EditorGUILayout.BeginToggleGroup("Fade In", currentSelectData.fadeIn);
-                currentSelectData.fadeInTime = EditorGUILayout.FloatField(new GUIContent("FadeIn Time", "淡入时间"), currentSelectData.fadeInTime);
-                currentSelectData.fadeInType = (FadeType)EditorGUILayout.EnumPopup(new GUIContent("FadeIn Type", "淡入类型"), currentSelectData.fadeInType);
+                var newvalue = EditorGUILayout.FloatField(new GUIContent("FadeIn Time", "淡入时间"), currentSelectData.fadeInTime);
+                if (newvalue < 0)
+                {
+                    newvalue = 0;
+                }
+                currentSelectData.fadeInTime = newvalue;
+                currentSelectData.fadeInType = (EaseType)EditorGUILayout.EnumPopup(new GUIContent("FadeIn Type", "淡入类型"), currentSelectData.fadeInType);
+                EditorGUILayout.EndToggleGroup();
                 EditorGUI.indentLevel--;
+
             }
-            EditorGUILayout.EndToggleGroup();
 
             EditorGUILayout.Space();
 
+            EditorGUI.BeginDisabledGroup(currentSelectData is ActorMixer);
             using (new EditorGUILayout.VerticalScope())
             {
                 EditorGUI.indentLevel++;
+
                 currentSelectData.fadeOut = EditorGUILayout.BeginToggleGroup(new GUIContent("Fade Out", "淡出"), currentSelectData.fadeOut);
-                currentSelectData.fadeOutTime = EditorGUILayout.FloatField(new GUIContent("FadeOut Time", "淡出时间"), currentSelectData.fadeOutTime);
-                currentSelectData.fadeOutType = (FadeType)EditorGUILayout.EnumPopup(new GUIContent("FadeOut Type", "淡出类型"), currentSelectData.fadeOutType);
+                var newvalue = EditorGUILayout.FloatField(new GUIContent("FadeOut Time", "淡出时间"), currentSelectData.fadeOutTime);
+                if (newvalue < 0)
+                {
+                    newvalue = 0;
+                }
+                currentSelectData.fadeOutTime = newvalue;
+                currentSelectData.fadeOutType = (EaseType)EditorGUILayout.EnumPopup(new GUIContent("FadeOut Type", "淡出类型"), currentSelectData.fadeOutType);
+                EditorGUILayout.EndToggleGroup();
                 EditorGUI.indentLevel--;
             }
-            EditorGUILayout.EndToggleGroup();
+            EditorGUI.EndDisabledGroup();
 
-            //if (currentSelectData is RandomContainer randomContainer )
-            //{
-            //    EditorGUILayout.Space();
-
-            //    using (new EditorGUILayout.VerticalScope())
-            //    {
-            //        EditorGUI.indentLevel++;
-            //        randomContainer.crossFade= EditorGUILayout.BeginToggleGroup(new GUIContent("CrossFade", "交叉淡变"), randomContainer.crossFade);
-            //        randomContainer.crossFadeTime = EditorGUILayout.FloatField(new GUIContent("CrossFade Time"), randomContainer.crossFadeTime);
-            //        randomContainer.crossFadeType = (CrossFadeType)EditorGUILayout.EnumPopup(new GUIContent("CrossFade Type", "淡出类型"), randomContainer.crossFadeType);
-            //        EditorGUI.indentLevel--;
-            //    }
-            //    EditorGUILayout.EndToggleGroup();
-            //}
-            //if (currentSelectData is SequenceContainer sequenceContainer)
-            //{
-
-            //}
             EditorGUILayout.EndHorizontal();
 
             EditorGUILayout.Space();
 
             if (EditorGUI.EndChangeCheck())
             {
-                manager.SyncPlayableData(currentSelectData.id,AudioComponentDataChangeType.General);
-                Debug.Log("数据刷新 In DrawTransitionsUnit");
+                manager.SyncDataToPlayable(currentSelectData.id, AudioComponentDataChangeType.General);
+                //Debug.Log("数据刷新 In DrawTransitionsUnit");
             }
         }
 
         private void DrawGeneralSettingsSidePage(AEAudioComponent currentSelectData)
         {
             EditorGUI.BeginChangeCheck();
-            EditorGUI.BeginDisabledGroup(currentSelectData.isContianerChild);
+
+            EditorGUI.BeginDisabledGroup(currentSelectData.isContianerChild == false);
+            var newOverrideActorMixer = GUILayout.Toggle((currentSelectData.overrideFunctionType & AEComponentDataOverrideType.OutputMixerGroup) != 0, "Override OutputMixer");
+            if (newOverrideActorMixer)
+            {
+                currentSelectData.overrideFunctionType |= AEComponentDataOverrideType.OutputMixerGroup;
+            }
+            else
+            {
+                currentSelectData.overrideFunctionType &= ~AEComponentDataOverrideType.OutputMixerGroup;
+            }
+            
+            EditorGUI.EndDisabledGroup();
+            EditorGUI.BeginDisabledGroup((currentSelectData.overrideFunctionType & AEComponentDataOverrideType.OutputMixerGroup) == 0 && currentSelectData.isContianerChild);
             currentSelectData.outputMixer = EditorGUILayout.ObjectField(currentSelectData.outputMixer, typeof(AudioMixerGroup), true) as AudioMixerGroup;
             EditorGUI.EndDisabledGroup();
-            currentSelectData.mute = EditorGUILayout.ToggleLeft("Mute", currentSelectData.mute);
+
+            EditorGUILayout.Space();
+
+            //currentSelectData.mute = EditorGUILayout.ToggleLeft("Mute", currentSelectData.mute);
             currentSelectData.loop = EditorGUILayout.BeginToggleGroup("Loop", currentSelectData.loop);
             using (new EditorGUI.IndentLevelScope())
             {
@@ -2250,7 +3624,7 @@ namespace ypzxAudioEditor
                 if (newIndex > 1 && newIndex != currentSelectData.loopTimes)
                 {
                     currentSelectData.loopTimes = newIndex;
-                    manager.SyncPlayableData(currentSelectData.id, AudioComponentDataChangeType.LoopIndexChange);
+                    manager.SyncDataToPlayable(currentSelectData.id, AudioComponentDataChangeType.LoopIndexChange);
                 }
                 EditorGUI.EndDisabledGroup();
                 EditorGUILayout.EndHorizontal();
@@ -2261,23 +3635,40 @@ namespace ypzxAudioEditor
 
             if (EditorGUI.EndChangeCheck())
             {
-                manager.SyncPlayableData(currentSelectData.id,AudioComponentDataChangeType.General);
-                Debug.Log("数据刷新 In DrawGeneralSettingsSidePage");
+                manager.SyncDataToPlayable(currentSelectData.id, AudioComponentDataChangeType.General);
+                //Debug.Log("数据刷新 In DrawGeneralSettingsSidePage");
             }
         }
 
         private void DrawEffectsSetting(AEAudioComponent currentSelectData)
         {
-            if (FoldoutHeaderFlags.Count == 0 || FoldoutHeaderFlags.Count != currentSelectData.effectSettings.Count)
+            if (foldoutHeaderFlags.Count == 0 || foldoutHeaderFlags.Count != currentSelectData.effectSettings.Count)
             {
-                FoldoutHeaderFlags.Clear();
+                foldoutHeaderFlags.Clear();
                 for (int i = 0; i < currentSelectData.effectSettings.Count; i++)
                 {
-                    FoldoutHeaderFlags.Add(true);
+                    foldoutHeaderFlags.Add(true);
                 }
             }
 
             EditorGUI.BeginChangeCheck();
+
+            EditorGUI.BeginDisabledGroup(currentSelectData.isContianerChild == false);
+            var newOverrideEffect = GUILayout.Toggle((currentSelectData.overrideFunctionType & AEComponentDataOverrideType.Effect) == AEComponentDataOverrideType.Effect, "Override Effects");
+            if (newOverrideEffect)
+            {
+                currentSelectData.overrideFunctionType |= AEComponentDataOverrideType.Effect;
+            }
+            else
+            {
+                currentSelectData.overrideFunctionType &= ~AEComponentDataOverrideType.Effect;
+            }
+            EditorGUI.EndDisabledGroup();
+
+            EditorGUILayout.Space();
+
+            EditorGUI.BeginDisabledGroup(currentSelectData.isContianerChild && (currentSelectData.overrideFunctionType & AEComponentDataOverrideType.Effect) != AEComponentDataOverrideType.Effect);
+
             var buttonRect = EditorGUILayout.GetControlRect(GUILayout.ExpandWidth(false));
             if (EditorGUI.DropdownButton(buttonRect, new GUIContent("新建 >>"), FocusType.Passive))
             {
@@ -2307,9 +3698,9 @@ namespace ypzxAudioEditor
                             case AEEffectType.ReverbFilter:
                                 currentSelectData.effectSettings.Add(new AEReverbFilter());
                                 break;
-                            case AEEffectType.ReverbZoneFilter:
-                                currentSelectData.effectSettings.Add(new AEReverbZone());
-                                break;
+                            //case AEEffectType.ReverbZoneFilter:
+                            //    currentSelectData.effectSettings.Add(new AEReverbZone());
+                            //    break;
                             case AEEffectType.EchoFilter:
                                 currentSelectData.effectSettings.Add(new AEEchoFilter());
                                 break;
@@ -2320,8 +3711,8 @@ namespace ypzxAudioEditor
                                 currentSelectData.effectSettings.Add(new AEDistortionFilter());
                                 break;
                         }
-                        FoldoutHeaderFlags.Add(true);
-                        manager.SyncPlayableData(currentSelectData.id,AudioComponentDataChangeType.AddEffect);
+                        foldoutHeaderFlags.Add(true);
+                        manager.SyncDataToPlayable(currentSelectData.id, AudioComponentDataChangeType.AddEffect);
                     }, i);
                 }
                 menu.DropDown(buttonRect);
@@ -2330,11 +3721,11 @@ namespace ypzxAudioEditor
             using (new GUILayout.VerticalScope("box"))
             {
                 GUI.color = preGUIColor;
-                ScorllViewPosition = EditorGUILayout.BeginScrollView(ScorllViewPosition);
+                scorllViewPosition = EditorGUILayout.BeginScrollView(scorllViewPosition);
                 for (int i = 0; i < currentSelectData.effectSettings.Count; i++)
                 {
                     var effectSetting = currentSelectData.effectSettings[i];
-                    FoldoutHeaderFlags[i] = EditorGUILayout.BeginFoldoutHeaderGroup(FoldoutHeaderFlags[i],
+                    foldoutHeaderFlags[i] = EditorGUILayout.BeginFoldoutHeaderGroup(foldoutHeaderFlags[i],
                         new GUIContent(effectSetting.type.ToString()),
                         menuAction: rect =>
                         {
@@ -2344,13 +3735,13 @@ namespace ypzxAudioEditor
                                  DataRegisterToUndo();
                                  var deleteEffectType = effectSetting.type;
                                  currentSelectData.effectSettings.Remove(effectSetting);
-                                 FoldoutHeaderFlags.Clear();
-                                 manager.SyncPlayableData(currentSelectData.id,AudioComponentDataChangeType.DeleteEffect, deleteEffectType);
+                                 foldoutHeaderFlags.Clear();
+                                 manager.SyncDataToPlayable(currentSelectData.id, AudioComponentDataChangeType.DeleteEffect, deleteEffectType);
                              });
                             menu.AddItem(new GUIContent("ResetData"), false, () =>
                              {
                                  effectSetting.Reset();
-                                 manager.SyncPlayableData(currentSelectData.id,AudioComponentDataChangeType.General);
+                                 manager.SyncDataToPlayable(currentSelectData.id, AudioComponentDataChangeType.General);
                              });
                             menu.DropDown(rect);
                         });
@@ -2364,17 +3755,17 @@ namespace ypzxAudioEditor
                             DataRegisterToUndo();
                             var deleteEffectType = effectSetting.type;
                             currentSelectData.effectSettings.Remove(effectSetting);
-                            FoldoutHeaderFlags.Clear();
-                            manager.SyncPlayableData(currentSelectData.id, AudioComponentDataChangeType.DeleteEffect, deleteEffectType);
+                            foldoutHeaderFlags.Clear();
+                            manager.SyncDataToPlayable(currentSelectData.id, AudioComponentDataChangeType.DeleteEffect, deleteEffectType);
                         });
                         menu.AddItem(new GUIContent("ResetData"), false, () =>
                         {
                             effectSetting.Reset();
-                            manager.SyncPlayableData(currentSelectData.id,AudioComponentDataChangeType.General);
+                            manager.SyncDataToPlayable(currentSelectData.id, AudioComponentDataChangeType.General);
                         });
                         menu.ShowAsContext();
                     }
-                    if (FoldoutHeaderFlags[i])
+                    if (foldoutHeaderFlags[i])
                     {
                         EditorGUI.indentLevel++;
                         switch (effectSetting.type)
@@ -2405,21 +3796,25 @@ namespace ypzxAudioEditor
                                     highpassFilter.HighPassResonanceQ, 1, 10);
                                 break;
                             case AEEffectType.ReverbFilter:
-                               // var reverbFilter = effectSetting as AEReverbFilter;
+                                // var reverbFilter = effectSetting as AEReverbFilter;
                                 if (effectSetting is AEReverbFilter reverbFilter)
                                 {
-                                    var newPreset = (AudioReverbPreset)EditorGUILayout.EnumPopup(new GUIContent("Preset", "预设"),
-                                  reverbFilter.preset);
+                                    var newPreset = (AudioReverbPreset)EditorGUILayout.EnumPopup(
+                                        new GUIContent("Preset", "预设"),
+                                        reverbFilter.preset);
                                     if (newPreset != reverbFilter.preset)
                                     {
                                         effectSettingObject.GetComponent<AudioReverbFilter>().reverbPreset = newPreset;
                                         reverbFilter.SetData(effectSettingObject.GetComponent<AudioReverbFilter>());
-                                        effectSettingObject.GetComponent<AudioReverbFilter>().reverbPreset = AudioReverbPreset.Off;
+                                        effectSettingObject.GetComponent<AudioReverbFilter>().reverbPreset =
+                                            AudioReverbPreset.Off;
                                     }
+
                                     EditorGUI.BeginDisabledGroup(reverbFilter.preset != AudioReverbPreset.User);
                                     reverbFilter.dryLevel = EditorGUILayout.IntSlider(new GUIContent("Dry Level"),
-                                       (int)reverbFilter.dryLevel, -10000, 0);
-                                    reverbFilter.room = EditorGUILayout.IntSlider(new GUIContent("Room"), (int)reverbFilter.room,
+                                        (int)reverbFilter.dryLevel, -10000, 0);
+                                    reverbFilter.room = EditorGUILayout.IntSlider(new GUIContent("Room"),
+                                        (int)reverbFilter.room,
                                         -10000, 0);
                                     reverbFilter.roomHF = EditorGUILayout.IntSlider(new GUIContent("Room HF"),
                                         (int)reverbFilter.roomHF, -10000, 0);
@@ -2429,9 +3824,11 @@ namespace ypzxAudioEditor
                                         reverbFilter.decayTime, 0.1f, 20f);
                                     reverbFilter.decayHFRatio = EditorGUILayout.Slider(new GUIContent("Decay HF Ratio"),
                                         reverbFilter.decayHFRatio, 0.1f, 2f);
-                                    reverbFilter.reflectionsLevel = EditorGUILayout.IntSlider(new GUIContent("Reflections Level"),
+                                    reverbFilter.reflectionsLevel = EditorGUILayout.IntSlider(
+                                        new GUIContent("Reflections Level"),
                                         (int)reverbFilter.reflectionsLevel, -10000, 1000);
-                                    reverbFilter.reflectionsDelay = EditorGUILayout.Slider(new GUIContent("Reflections Delay"),
+                                    reverbFilter.reflectionsDelay = EditorGUILayout.Slider(
+                                        new GUIContent("Reflections Delay"),
                                         reverbFilter.reflectionsDelay, 0, 0.3f);
                                     reverbFilter.reverbLevel = EditorGUILayout.IntSlider(new GUIContent("Reverb Level"),
                                         (int)reverbFilter.reverbLevel, -10000, 2000);
@@ -2447,39 +3844,41 @@ namespace ypzxAudioEditor
                                         reverbFilter.density, 0, 100f);
                                     EditorGUI.EndDisabledGroup();
                                 }
-                              
+
                                 break;
-                            case AEEffectType.ReverbZoneFilter:
-                                if (effectSetting is AEReverbZone reverbZoneFilter)
                                 {
-                                    reverbZoneFilter.minDistance = EditorGUILayout.FloatField(new GUIContent("Min Distance"), reverbZoneFilter.minDistance);
-                                    reverbZoneFilter.maxDistance = EditorGUILayout.FloatField(new GUIContent("Max Distance"), reverbZoneFilter.maxDistance);
-                                    EditorGUILayout.Space();
-                                    var newPreset = (AudioReverbPreset)EditorGUILayout.EnumPopup(new GUIContent("Preset", "预设"),
-                                        reverbZoneFilter.preset);
-                                    if (newPreset != reverbZoneFilter.preset)
-                                    {
-                                        effectSettingObject.GetComponent<AudioReverbZone>().reverbPreset = newPreset;
-                                        reverbZoneFilter.SetData(effectSettingObject.GetComponent<AudioReverbZone>());
-                                        effectSettingObject.GetComponent<AudioReverbZone>().reverbPreset = AudioReverbPreset.Off;
-                                    }
-                                    EditorGUI.BeginDisabledGroup(reverbZoneFilter.preset != AudioReverbPreset.User);
-                                    reverbZoneFilter.room = EditorGUILayout.IntSlider(new GUIContent("Room"), reverbZoneFilter.room, -10000, 0);
-                                    reverbZoneFilter.roomHF = EditorGUILayout.IntSlider(new GUIContent("Room HF"), reverbZoneFilter.roomHF, -10000, 0);
-                                    reverbZoneFilter.roomLF = EditorGUILayout.IntSlider(new GUIContent("Room LF"), reverbZoneFilter.roomLF, -10000, 0);
-                                    reverbZoneFilter.decayTime = EditorGUILayout.Slider(new GUIContent("Decay Time"), reverbZoneFilter.decayTime, 0.1f, 20f);
-                                    reverbZoneFilter.decayHFRatio = EditorGUILayout.Slider(new GUIContent("Decay HF Ratio"), reverbZoneFilter.decayHFRatio, 0.1f, 2f);
-                                    reverbZoneFilter.reflections = EditorGUILayout.IntSlider(new GUIContent("Reflections"), reverbZoneFilter.reflections, -10000, 1000);
-                                    reverbZoneFilter.reflectionsDelay = EditorGUILayout.Slider(new GUIContent("Reflections Delay"), reverbZoneFilter.reflectionsDelay, 0, 0.3f);
-                                    reverbZoneFilter.reverb = EditorGUILayout.IntSlider(new GUIContent("Reverb"), reverbZoneFilter.reverb, -10000, 2000);
-                                    reverbZoneFilter.reverbDelay = EditorGUILayout.Slider(new GUIContent("Reverb Delay"), reverbZoneFilter.reverbDelay, 0, 0.1f);
-                                    reverbZoneFilter.hfReference = EditorGUILayout.IntSlider(new GUIContent("HF Reference"),(int)reverbZoneFilter.hfReference, 1000, 20000);
-                                    reverbZoneFilter.lfReference = EditorGUILayout.IntSlider(new GUIContent("LF Reference"), (int)reverbZoneFilter.lfReference, 20, 1000);
-                                    reverbZoneFilter.diffusion = EditorGUILayout.Slider(new GUIContent("Diffusion"), reverbZoneFilter.diffusion, 0, 100f);
-                                    reverbZoneFilter.density = EditorGUILayout.Slider(new GUIContent("Density"), reverbZoneFilter.density, 0, 100f);
-                                    EditorGUI.EndDisabledGroup();
+                                    //case AEEffectType.ReverbZoneFilter:
+                                    //    if (effectSetting is AEReverbZone reverbZoneFilter)
+                                    //    {
+                                    //        reverbZoneFilter.minDistance = EditorGUILayout.FloatField(new GUIContent("Min Distance"), reverbZoneFilter.minDistance);
+                                    //        reverbZoneFilter.maxDistance = EditorGUILayout.FloatField(new GUIContent("Max Distance"), reverbZoneFilter.maxDistance);
+                                    //        EditorGUILayout.Space();
+                                    //        var newPreset = (AudioReverbPreset)EditorGUILayout.EnumPopup(new GUIContent("Preset", "预设"),
+                                    //            reverbZoneFilter.preset);
+                                    //        if (newPreset != reverbZoneFilter.preset)
+                                    //        {
+                                    //            effectSettingObject.GetComponent<AudioReverbZone>().reverbPreset = newPreset;
+                                    //            reverbZoneFilter.SetData(effectSettingObject.GetComponent<AudioReverbZone>());
+                                    //            effectSettingObject.GetComponent<AudioReverbZone>().reverbPreset = AudioReverbPreset.Off;
+                                    //        }
+                                    //        EditorGUI.BeginDisabledGroup(reverbZoneFilter.preset != AudioReverbPreset.User);
+                                    //        reverbZoneFilter.room = EditorGUILayout.IntSlider(new GUIContent("Room"), reverbZoneFilter.room, -10000, 0);
+                                    //        reverbZoneFilter.roomHF = EditorGUILayout.IntSlider(new GUIContent("Room HF"), reverbZoneFilter.roomHF, -10000, 0);
+                                    //        reverbZoneFilter.roomLF = EditorGUILayout.IntSlider(new GUIContent("Room LF"), reverbZoneFilter.roomLF, -10000, 0);
+                                    //        reverbZoneFilter.decayTime = EditorGUILayout.Slider(new GUIContent("Decay Time"), reverbZoneFilter.decayTime, 0.1f, 20f);
+                                    //        reverbZoneFilter.decayHFRatio = EditorGUILayout.Slider(new GUIContent("Decay HF Ratio"), reverbZoneFilter.decayHFRatio, 0.1f, 2f);
+                                    //        reverbZoneFilter.reflections = EditorGUILayout.IntSlider(new GUIContent("Reflections"), reverbZoneFilter.reflections, -10000, 1000);
+                                    //        reverbZoneFilter.reflectionsDelay = EditorGUILayout.Slider(new GUIContent("Reflections Delay"), reverbZoneFilter.reflectionsDelay, 0, 0.3f);
+                                    //        reverbZoneFilter.reverb = EditorGUILayout.IntSlider(new GUIContent("Reverb"), reverbZoneFilter.reverb, -10000, 2000);
+                                    //        reverbZoneFilter.reverbDelay = EditorGUILayout.Slider(new GUIContent("Reverb Delay"), reverbZoneFilter.reverbDelay, 0, 0.1f);
+                                    //        reverbZoneFilter.hfReference = EditorGUILayout.IntSlider(new GUIContent("HF Reference"), (int)reverbZoneFilter.hfReference, 1000, 20000);
+                                    //        reverbZoneFilter.lfReference = EditorGUILayout.IntSlider(new GUIContent("LF Reference"), (int)reverbZoneFilter.lfReference, 20, 1000);
+                                    //        reverbZoneFilter.diffusion = EditorGUILayout.Slider(new GUIContent("Diffusion"), reverbZoneFilter.diffusion, 0, 100f);
+                                    //        reverbZoneFilter.density = EditorGUILayout.Slider(new GUIContent("Density"), reverbZoneFilter.density, 0, 100f);
+                                    //        EditorGUI.EndDisabledGroup();
+                                    //    }
+                                    //    break;
                                 }
-                                break;
                             case AEEffectType.EchoFilter:
                                 if (effectSetting is AEEchoFilter echoFilter)
                                 {
@@ -2518,10 +3917,12 @@ namespace ypzxAudioEditor
                 EditorGUILayout.EndScrollView();
             }
 
+            EditorGUI.EndDisabledGroup();
+
             if (EditorGUI.EndChangeCheck())
             {
-                manager.SyncPlayableData(currentSelectData.id,AudioComponentDataChangeType.General);
-                Debug.Log("数据刷新 In EffectsSetting");
+                manager.SyncDataToPlayable(currentSelectData.id, AudioComponentDataChangeType.General);
+                //Debug.Log("数据刷新 In EffectsSetting");
             }
         }
 
@@ -2553,6 +3954,25 @@ namespace ypzxAudioEditor
                 }
             }
             EditorGUI.BeginChangeCheck();
+
+            EditorGUI.BeginChangeCheck();
+
+            EditorGUI.BeginDisabledGroup(currentSelectData.isContianerChild == false);
+            var newOverrideActorMixer = GUILayout.Toggle((currentSelectData.overrideFunctionType & AEComponentDataOverrideType.Attenuation) == AEComponentDataOverrideType.Attenuation, "Override 3D Setting");
+            if (newOverrideActorMixer)
+            {
+                currentSelectData.overrideFunctionType |= AEComponentDataOverrideType.Attenuation;
+            }
+            else
+            {
+                currentSelectData.overrideFunctionType &= ~AEComponentDataOverrideType.Attenuation;
+            }
+            EditorGUI.EndDisabledGroup();
+
+            EditorGUILayout.Space();
+
+            EditorGUI.BeginDisabledGroup(currentSelectData.isContianerChild && (currentSelectData.overrideFunctionType & AEComponentDataOverrideType.Attenuation) != AEComponentDataOverrideType.Attenuation);
+
             GUI.color = backgroundBoxColor;
             using (new EditorGUILayout.VerticalScope("box", GUILayout.ExpandWidth(false)))
             {
@@ -2631,8 +4051,8 @@ namespace ypzxAudioEditor
             GUI.color = backgroundBoxColor;
             using (new GUILayout.VerticalScope("box"))
             {
-                ScorllViewPosition =
-                    EditorGUILayout.BeginScrollView(ScorllViewPosition, GUILayout.Height(120));
+                scorllViewPosition =
+                    EditorGUILayout.BeginScrollView(scorllViewPosition, GUILayout.Height(120));
                 for (int i = 0; i < currentSelectData.attenuationCurveSettings.Count; i++)
                 {
                     // GUI.color = new Color(0,0,1,0.2f);
@@ -2643,7 +4063,7 @@ namespace ypzxAudioEditor
                         var curveSetting = currentSelectData.attenuationCurveSettings[i];
                         var colorRect = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight,
                             GUILayout.Width(5));
-                        EditorGUI.DrawRect(colorRect, ColorRankList[i]);
+                        EditorGUI.DrawRect(colorRect, colorRankList[i]);
                         // curveSetting.curveData = EditorGUILayout.CurveField(curveSetting.attenuationCurveType.ToString(),curveSetting.curveData);
                         EditorGUILayout.CurveField(curveSetting.attenuationCurveType.ToString(), curveSetting.curveData);
                         for (int j = 0; j < curveSetting.curveData.length; j++)
@@ -2692,10 +4112,12 @@ namespace ypzxAudioEditor
                 EditorGUILayout.EndScrollView();
             }
             GUI.color = preGUIColor;
+            EditorGUI.EndDisabledGroup();
+
             if (EditorGUI.EndChangeCheck())
             {
-                manager.SyncPlayableData(currentSelectData.id,AudioComponentDataChangeType.General);
-                Debug.Log("数据刷新 In 3DSetting");
+                manager.SyncDataToPlayable(currentSelectData.id, AudioComponentDataChangeType.General);
+                // Debug.Log("数据刷新 In 3DSetting");
             }
         }
 
@@ -2725,7 +4147,7 @@ namespace ypzxAudioEditor
                         }
                     }
                     currentSelectData.attenuationCurveSettings.Add(new AttenuationCurveSetting((AttenuationCurveType)cureType));
-                    manager.SyncPlayableData(currentSelectData.id,AudioComponentDataChangeType.General);
+                    manager.SyncDataToPlayable(currentSelectData.id, AudioComponentDataChangeType.General);
                 }, i);
             }
             menu.DropDown(rect);
@@ -2739,16 +4161,18 @@ namespace ypzxAudioEditor
             AnimationCurve tempCurve = null;
             float? gameParameterMinValue = null;
             float? gameParameterMaxValue = null;
+            float? gameParameterCurrentValue = null;
             float? yAxisMin = null;
             float? yAxisMax = null;
             if (currentSelectData.gameParameterCurveSettings.Count > 0 && whichRTPCSelect < currentSelectData.gameParameterCurveSettings.Count)
             {
-                var gameParameterID = currentSelectData.gameParameterCurveSettings[whichRTPCSelect].gameParameterID;
-                var gameParameter = AudioEditorManager.GetAEComponentDataByID<AEGameSyncs>(gameParameterID) as GameParameter;
+                var gameParameterID = currentSelectData.gameParameterCurveSettings[whichRTPCSelect].gameParameterId;
+                var gameParameter = AudioEditorManager.GetAEComponentDataByID<GameParameter>(gameParameterID);
                 if (gameParameter != null)
                 {
                     gameParameterMinValue = gameParameter.MinValue;
                     gameParameterMaxValue = gameParameter.MaxValue;
+                    gameParameterCurrentValue = gameParameter.Value;
                 }
                 //tempCurveList.Add(currentSelectData.gameParameterCurveSettings[whichRTPCSelect].curveData);
                 tempCurve = currentSelectData.gameParameterCurveSettings[whichRTPCSelect].curveData;
@@ -2761,23 +4185,24 @@ namespace ypzxAudioEditor
             }
             EditorGUI.BeginChangeCheck();
             var graphRect = EditorGUILayout.GetControlRect(GUILayout.ExpandHeight(true));
-            GraphCurveRendering.Draw(graphRect, tempCurve, ColorRankList[whichRTPCSelect], gameParameterMinValue, gameParameterMaxValue, yAxisMin, yAxisMax);
+            GraphCurveRendering.Draw(graphRect, tempCurve, colorRankList[whichRTPCSelect], gameParameterMinValue,
+                gameParameterMaxValue, yAxisMin, yAxisMax, gameParameterCurrentValue);
 
-            int Column1With = 100;
-            int Column2With = 200;
+            int column1With = 100;
+            int column2With = 200;
             using (new GUILayout.VerticalScope("box"))
             {
                 GUI.color = backgroundBoxColor;
                 EditorGUILayout.BeginHorizontal();
                 //GUILayout.Space(5);
-                GUILayout.Box(new GUIContent("Y Axis"), GUILayout.Width(Column1With));
-                GUILayout.Box(new GUIContent("X Axis"), GUILayout.Width(Column2With));
+                GUILayout.Box(new GUIContent("Y Axis"), GUILayout.Width(column1With));
+                GUILayout.Box(new GUIContent("X Axis"), GUILayout.Width(column2With));
                 GUILayout.Box(new GUIContent("Curve"), GUILayout.ExpandWidth(true));
                 EditorGUILayout.EndHorizontal();
                 GUI.color = preGUIColor;
 
-                ScorllViewPosition =
-                    EditorGUILayout.BeginScrollView(ScorllViewPosition, GUILayout.Height(100));
+                scorllViewPosition =
+                    EditorGUILayout.BeginScrollView(scorllViewPosition, GUILayout.Height(100));
 
                 var rect = Rect.zero;
 
@@ -2785,32 +4210,32 @@ namespace ypzxAudioEditor
                 {
                     if (whichRTPCSelect == i)
                     {
-                        GUI.color = rectSelectedColor;
+                        GUI.color = RectSelectedColor;
                     }
                     using (new GUILayout.HorizontalScope("box"))
                     {
                         GUI.color = preGUIColor;
                         var curveSetting = currentSelectData.gameParameterCurveSettings[i];
                         rect = EditorGUILayout.GetControlRect(false, GUILayout.Width(5));
-                        EditorGUI.DrawRect(rect, ColorRankList[i]);
-                        EditorGUILayout.LabelField(new GUIContent(curveSetting.targetType.ToString()), GUILayout.Width(Column1With - 5));
-                        var gameParameter = AudioEditorManager.GetAEComponentDataByID<AEGameSyncs>(curveSetting.gameParameterID) as GameParameter;
+                        EditorGUI.DrawRect(rect, colorRankList[i]);
+                        EditorGUILayout.LabelField(new GUIContent(curveSetting.targetType.ToString()), GUILayout.Width(column1With - 5));
+                        var gameParameter = AudioEditorManager.GetAEComponentDataByID<GameParameter>(curveSetting.gameParameterId);
                         if (gameParameter == null)
                         {
-                            rect = EditorGUILayout.GetControlRect(true, GUILayout.Width(Column2With - 20));
+                            rect = EditorGUILayout.GetControlRect(true, GUILayout.Width(column2With - 20));
                             if (EditorGUI.DropdownButton(rect, new GUIContent(">>"), FocusType.Passive))
                             {
                                 // GetRelatedGameParameterMenu(rect, curveSetting);
                                 var menu = new GenericMenu();
                                 menu.allowDuplicateNames = false;
-                                for (int j = 0; j < ManagerData.GameSyncsData.Count; j++)
+                                for (int j = 0; j < ManagerData.gameSyncsData.Count; j++)
                                 {
-                                    if (ManagerData.GameSyncsData[j] is GameParameter gameParameterData)
+                                    if (ManagerData.gameSyncsData[j] is GameParameter gameParameterData)
                                         menu.AddItem(new GUIContent(gameParameterData.name), false, (id) =>
                                         {
                                             DataRegisterToUndo();
-                                            curveSetting.gameParameterID = (int)id;
-                                            manager.SyncPlayableData(currentSelectData.id,AudioComponentDataChangeType.General);
+                                            curveSetting.gameParameterId = (int)id;
+                                            manager.SyncDataToPlayable(currentSelectData.id, AudioComponentDataChangeType.General);
                                         }, gameParameterData.id);
                                 }
                                 menu.DropDown(rect);
@@ -2819,10 +4244,23 @@ namespace ypzxAudioEditor
                         }
                         else
                         {
-                            EditorGUILayout.LabelField(new GUIContent(gameParameter.name), GUILayout.Width(Column2With-40));
-                            if (EditorGUILayout.DropdownButton(new GUIContent("  "), FocusType.Passive,GUILayout.Width(20)))
+                            EditorGUILayout.LabelField(new GUIContent(gameParameter.name), GUILayout.Width(column2With - 40));
+                            rect = EditorGUILayout.GetControlRect(GUILayout.Width(20));
+                            if (EditorGUI.DropdownButton(rect, new GUIContent("  "), FocusType.Passive))
                             {
-                                //TODO: 完成RTPC的X轴选项功能
+                                var menu = new GenericMenu();
+                                menu.allowDuplicateNames = false;
+                                for (int j = 0; j < ManagerData.gameSyncsData.Count; j++)
+                                {
+                                    if (ManagerData.gameSyncsData[j] is GameParameter gameParameterData)
+                                        menu.AddItem(new GUIContent(gameParameterData.name), false, (id) =>
+                                        {
+                                            DataRegisterToUndo();
+                                            curveSetting.gameParameterId = (int)id;
+                                            manager.SyncDataToPlayable(currentSelectData.id, AudioComponentDataChangeType.General);
+                                        }, gameParameterData.id);
+                                }
+                                menu.DropDown(rect);
                             }
                             GUILayout.Space(20);
                         }
@@ -2867,7 +4305,7 @@ namespace ypzxAudioEditor
                     if (rect.Contains(Event.current.mousePosition) && Event.current.type == EventType.MouseDown)
                     {
                         whichRTPCSelect = i;
-                        Event.current.Use();
+                        //Event.current.Use();
                         Repaint();
                     }
                     //键盘的delete快捷键
@@ -2893,8 +4331,8 @@ namespace ypzxAudioEditor
 
             if (EditorGUI.EndChangeCheck())
             {
-                manager.SyncPlayableData(currentSelectData.id,AudioComponentDataChangeType.General);
-                Debug.Log("数据刷新 In RTPC");
+                manager.SyncDataToPlayable(currentSelectData.id, AudioComponentDataChangeType.General);
+                // Debug.Log("数据刷新 In RTPC");
             }
         }
 
@@ -2906,24 +4344,35 @@ namespace ypzxAudioEditor
         private void GetGameParameterTargetTypeMenu(Rect rect, AEAudioComponent currentSelectData)
         {
             var menu = new GenericMenu();
-            menu.allowDuplicateNames = false;
+            menu.allowDuplicateNames = true;
             var curveTypeStr = Enum.GetNames(typeof(GameParameterTargetType));
+            var gameParameterList = new List<GameParameter>();
+            foreach (var aeGameSyncse in ManagerData.gameSyncsData)
+            {
+                if (aeGameSyncse is GameParameter gameParameter) gameParameterList.Add(gameParameter);
+            }
             for (int i = 0; i < curveTypeStr.Length; i++)
             {
-                menu.AddItem(new GUIContent(curveTypeStr[i]), false, (cureType) =>
+                for (int j = 0; j < gameParameterList.Count; j++)
                 {
-                    //目前根据需求只允许一个属性由一个GameParameter控制，最终实现应该可以一个属性由多个GameParameter控制
-                    foreach (var curveSetting in currentSelectData.gameParameterCurveSettings)
-                    {
-                        if (curveSetting.targetType.CompareTo((GameParameterTargetType)cureType) == 0)
+                    int[] data = { i, gameParameterList[j].id };
+                    menu.AddItem(new GUIContent(curveTypeStr[i] + "/" + gameParameterList[j].name), false, (getData) =>
                         {
-                            return;
-                        }
-                    }
-                    DataRegisterToUndo();
-                    currentSelectData.gameParameterCurveSettings.Add(new GameParameterCurveSetting((GameParameterTargetType)cureType));
-                    manager.SyncPlayableData(currentSelectData.id,AudioComponentDataChangeType.General);
-                }, i);
+                            //目前根据需求只允许一个属性由一个GameParameter控制，最终实现应该可以一个属性由多个GameParameter控制
+                            var targetType = (GameParameterTargetType)((int[])getData)[0];
+                            var targetGameParameterId = ((int[])getData)[1];
+                            foreach (var curveSetting in currentSelectData.gameParameterCurveSettings)
+                            {
+                                if (curveSetting.targetType.CompareTo(targetType) == 0)
+                                {
+                                    return;
+                                }
+                            }
+                            DataRegisterToUndo();
+                            currentSelectData.gameParameterCurveSettings.Add(new GameParameterCurveSetting(targetType, targetGameParameterId));
+                            manager.SyncDataToPlayable(currentSelectData.id, AudioComponentDataChangeType.General);
+                        }, data);
+                }
             }
             menu.DropDown(rect);
         }
@@ -2936,12 +4385,12 @@ namespace ypzxAudioEditor
             if (EditorGUI.DropdownButton(buttonRect, new GUIContent("Set StateGroup >>"), FocusType.Passive))
             {
                 var menu = new GenericMenu();
-                foreach (var gameSyncs in ManagerData.GameSyncsData)
+                foreach (var gameSyncs in ManagerData.gameSyncsData)
                 {
                     if (gameSyncs is StateGruop stateGruop)
                     {
                         var check = false;
-                        foreach (var stateSetting in currentSelectData.StateSettings)
+                        foreach (var stateSetting in currentSelectData.stateSettings)
                         {
                             if (stateGruop.id == stateSetting.stateGroupId) check = true;
                             break;
@@ -2950,8 +4399,8 @@ namespace ypzxAudioEditor
                         menu.AddItem(new GUIContent(stateGruop.name), false, (selectedStateGruop) =>
                         {
                             DataRegisterToUndo();
-                            currentSelectData.StateSettings.Add(new StateSetting(selectedStateGruop as StateGruop));
-                            manager.SyncPlayableData(currentSelectData.id,AudioComponentDataChangeType.General);
+                            currentSelectData.stateSettings.Add(new StateSetting(selectedStateGruop as StateGruop));
+                            manager.SyncDataToPlayable(currentSelectData.id, AudioComponentDataChangeType.General);
                         }, stateGruop);
                     }
                 }
@@ -2959,51 +4408,51 @@ namespace ypzxAudioEditor
             }
             //EditorGUILayout.Space(EditorGUIUtility.standardVerticalSpacing);
 
-            if (FoldoutHeaderFlags.Count == 0 || FoldoutHeaderFlags.Count != currentSelectData.StateSettings.Count)
+            if (foldoutHeaderFlags.Count == 0 || foldoutHeaderFlags.Count != currentSelectData.stateSettings.Count)
             {
-                FoldoutHeaderFlags.Clear();
-                for (int i = 0; i < currentSelectData.StateSettings.Count; i++)
+                foldoutHeaderFlags.Clear();
+                for (int i = 0; i < currentSelectData.stateSettings.Count; i++)
                 {
-                    FoldoutHeaderFlags.Add(true);
+                    foldoutHeaderFlags.Add(true);
                 }
             }
             GUI.color = backgroundBoxColor;
             using (new GUILayout.VerticalScope("box"))
             {
                 GUI.color = preGUIColor;
-                ScorllViewPosition = EditorGUILayout.BeginScrollView(ScorllViewPosition);
-                for (int i = 0; i < currentSelectData.StateSettings.Count; i++)
+                scorllViewPosition = EditorGUILayout.BeginScrollView(scorllViewPosition);
+                for (int i = 0; i < currentSelectData.stateSettings.Count; i++)
                 {
                     //检测对应group是否被删除
                     var stateGruop =
-                        AudioEditorManager.GetAEComponentDataByID<StateGruop>(currentSelectData.StateSettings[i]
+                        AudioEditorManager.GetAEComponentDataByID<StateGruop>(currentSelectData.stateSettings[i]
                             .stateGroupId) as StateGruop;
                     if (stateGruop == null)
                     {
-                        currentSelectData.StateSettings.RemoveAt(i);
+                        currentSelectData.stateSettings.RemoveAt(i);
                         Repaint();
                     }
-                    if (currentSelectData.StateSettings[i].volumeList.Count != stateGruop.StateListCount || currentSelectData.StateSettings[i].pitchList.Count != stateGruop.StateListCount)
+                    if (currentSelectData.stateSettings[i].volumeList.Count != stateGruop.StateListCount || currentSelectData.stateSettings[i].pitchList.Count != stateGruop.StateListCount)
                     {
                         //在新建和删除state时会执行同步audioComponent数据的操作，不应该会进入此步
                         Debug.LogError("[AudioEditor]: 发生错误");
-                        currentSelectData.StateSettings[i].Reset(stateGruop);
+                        currentSelectData.stateSettings[i].Reset(stateGruop);
                     }
 
-                    FoldoutHeaderFlags[i] = EditorGUILayout.BeginFoldoutHeaderGroup(FoldoutHeaderFlags[i],
+                    foldoutHeaderFlags[i] = EditorGUILayout.BeginFoldoutHeaderGroup(foldoutHeaderFlags[i],
                         new GUIContent(stateGruop.name), menuAction: rect =>
                         {
                             var menu = new GenericMenu();
                             menu.AddItem(new GUIContent("Delete"), false, (x) =>
                             {
                                 DataRegisterToUndo();
-                                currentSelectData.StateSettings.RemoveAt((int)x);
-                                FoldoutHeaderFlags.Clear();
-                                manager.SyncPlayableData(currentSelectData.id,AudioComponentDataChangeType.General);
+                                currentSelectData.stateSettings.RemoveAt((int)x);
+                                foldoutHeaderFlags.Clear();
+                                manager.SyncDataToPlayable(currentSelectData.id, AudioComponentDataChangeType.General);
                             }, i);
                             menu.DropDown(rect);
                         });
-                    if (FoldoutHeaderFlags[i])
+                    if (foldoutHeaderFlags[i])
                     {
                         EditorGUI.indentLevel++;
                         for (int j = 0; j < stateGruop.StateListCount; j++)
@@ -3017,10 +4466,10 @@ namespace ypzxAudioEditor
                             EditorGUILayout.BeginHorizontal();
 
                             EditorGUILayout.LabelField(state.name);
-                            currentSelectData.StateSettings[i].volumeList[j] = EditorGUILayout.Slider(new GUIContent("Volume"),
-                                currentSelectData.StateSettings[i].volumeList[j], 0, 1);
-                            currentSelectData.StateSettings[i].pitchList[j] = EditorGUILayout.Slider(new GUIContent("Pitch"),
-                                currentSelectData.StateSettings[i].pitchList[j], 0, 3);
+                            currentSelectData.stateSettings[i].volumeList[j] = EditorGUILayout.Slider(new GUIContent("Volume"),
+                                currentSelectData.stateSettings[i].volumeList[j], 0, 1);
+                            currentSelectData.stateSettings[i].pitchList[j] = EditorGUILayout.Slider(new GUIContent("Pitch"),
+                                currentSelectData.stateSettings[i].pitchList[j], 0, 3);
 
                             EditorGUILayout.EndHorizontal();
                         }
@@ -3034,19 +4483,56 @@ namespace ypzxAudioEditor
 
             if (EditorGUI.EndChangeCheck())
             {
-                manager.SyncPlayableData(currentSelectData.id,AudioComponentDataChangeType.General);
-                Debug.Log("数据刷新 In States");
+                manager.SyncDataToPlayable(currentSelectData.id, AudioComponentDataChangeType.General);
+                //Debug.Log("数据刷新 In States");
             }
         }
 
         private void DrawOtherSettingUnit(AEAudioComponent currentSelectData)
         {
             EditorGUI.BeginChangeCheck();
+
+            EditorGUI.BeginChangeCheck();
+
+            EditorGUI.BeginDisabledGroup(currentSelectData.isContianerChild == false);
+            var newOverrideActorMixer = GUILayout.Toggle((currentSelectData.overrideFunctionType & AEComponentDataOverrideType.OtherSetting) == AEComponentDataOverrideType.OtherSetting, "Override OtherSettings");
+            if (newOverrideActorMixer)
+            {
+                currentSelectData.overrideFunctionType |= AEComponentDataOverrideType.OtherSetting;
+            }
+            else
+            {
+                currentSelectData.overrideFunctionType &= ~AEComponentDataOverrideType.OtherSetting;
+            }
+
+            EditorGUI.EndDisabledGroup();
+
+            EditorGUILayout.Space();
+
+            EditorGUI.BeginDisabledGroup(currentSelectData.isContianerChild && (currentSelectData.overrideFunctionType & AEComponentDataOverrideType.OtherSetting) != AEComponentDataOverrideType.OtherSetting);
+
             GUI.color = backgroundBoxColor;
             using (new EditorGUILayout.VerticalScope("box", GUILayout.ExpandWidth(false), GUILayout.ExpandHeight(true)))
             {
                 GUI.color = preGUIColor;
-                EditorGUILayout.LabelField("Other Setting", BoldLabelStyleSkin.label);
+                EditorGUILayout.LabelField("Other Setting", EditorStyles.boldLabel);
+
+                var newTempo = EditorGUILayout.FloatField(new GUIContent("Tempo"), currentSelectData.tempo, GUILayout.ExpandWidth(false));
+                if (Math.Abs(newTempo - currentSelectData.tempo) > 0.01)
+                {
+                    if (newTempo < 1) newTempo = 1;
+                    currentSelectData.tempo = newTempo;
+                }
+                var newBeatsPerMeasure = EditorGUILayout.IntField(new GUIContent("Beats Per Measure"), currentSelectData.beatsPerMeasure, GUILayout.ExpandWidth(false));
+                if (newBeatsPerMeasure != currentSelectData.beatsPerMeasure)
+                {
+                    if (newBeatsPerMeasure < 1) newBeatsPerMeasure = 1;
+                    currentSelectData.beatsPerMeasure = newBeatsPerMeasure;
+                }
+                currentSelectData.offset = EditorGUILayout.FloatField(new GUIContent("Offset"), currentSelectData.offset, GUILayout.ExpandWidth(false));
+
+                EditorGUILayout.Space();
+
                 currentSelectData.unloadClipWhenPlayEnd = EditorGUILayout.ToggleLeft(
                     new GUIContent("当实例播放结束时直接卸载音频文件", "当音频文件的LoadType为Streaming时此选项无效"),
                     currentSelectData.unloadClipWhenPlayEnd);
@@ -3056,45 +4542,98 @@ namespace ypzxAudioEditor
                     EditorGUILayout.IntSlider(new GUIContent("Priority", "优先级,数值越小优先级越高"), currentSelectData.priority, 0, 256);
                 currentSelectData.limitPlayNumber = EditorGUILayout.IntSlider(
                     new GUIContent("Limit Play Number", "限制此组件的最大同时播放数量"), currentSelectData.limitPlayNumber, 1, 10);
-
             }
 
-            GUI.color = backgroundBoxColor;
-            using (new EditorGUILayout.VerticalScope("box", GUILayout.ExpandWidth(false), GUILayout.ExpandHeight(true)))
-            {
-                GUI.color = preGUIColor;
-                EditorGUILayout.LabelField(new GUIContent("Global Setting", "此部分选项为全局设置，与单一组件无关"), BoldLabelStyleSkin.label);
-                AudioConfiguration config = AudioSettings.GetConfiguration();
-                ManagerData.StaticallyLinkedAudioClips =
-                    EditorGUILayout.ToggleLeft(new GUIContent("静态关联AudioClips", "如取消此选项，需调用加载AudioClip的委托方法"), ManagerData.StaticallyLinkedAudioClips);
-                GUILayout.Space(EditorGUIUtility.standardVerticalSpacing);
-                EditorGUI.BeginDisabledGroup(EditorApplication.isPlaying);
-                var newRealVoiceNumer =
-                    EditorGUILayout.IntSlider(new GUIContent("RealVoicesNumer", "游戏中当前可同时听到的最大声音数"),
-                        config.numRealVoices, 1, 512);
-                if (newRealVoiceNumer != config.numRealVoices)
-                {
-                    config.numRealVoices = newRealVoiceNumer;
-                    AudioSettings.Reset(config);
-                }
-                EditorGUI.EndDisabledGroup();
-            }
+            #region 此部分内容已迁移至ProjectSetting中
+            //GUI.color = backgroundBoxColor;
+            //using (new EditorGUILayout.VerticalScope("box", GUILayout.ExpandWidth(false), GUILayout.ExpandHeight(true)))
+            //{
+            //    GUI.color = preGUIColor;
+            //    EditorGUILayout.LabelField(new GUIContent("Global Setting", "此部分选项为全局设置，与单一组件无关"), EditorStyles.boldLabel);
 
-            GUI.color = backgroundBoxColor;
-            using (new EditorGUILayout.VerticalScope("box", GUILayout.ExpandWidth(false), GUILayout.ExpandHeight(true)))
-            {
-                GUI.color = preGUIColor;
-                EditorGUILayout.LabelField(new GUIContent("UI Setting", "此部分选项为编辑器UI的设定，与组件无关"), BoldLabelStyleSkin.label);
-                AudioConfiguration config = AudioSettings.GetConfiguration();
-                data.freshPageWhenTabInexChange =
-                    EditorGUILayout.ToggleLeft(new GUIContent("当选择变更时是否刷新页面"), data.freshPageWhenTabInexChange);
-                GUILayout.Space(EditorGUIUtility.standardVerticalSpacing);
-            }
+            //    EditorGUI.BeginDisabledGroup(EditorApplication.isPlaying);
+
+            //    //在勾选上后直接链接上所有的AudioClip，否则所有组件都还是空的状态，直接进行构建打包的话会无法加载AudioClip
+            //    var newStaticallyLinkedAudioClipsOption =
+            //        EditorGUILayout.ToggleLeft(new GUIContent("静态关联AudioClips", "如取消此选项，会调用加载AudioClip的委托方法"), manager.staticallyLinkedAudioClips);
+            //    GUILayout.Space(EditorGUIUtility.standardVerticalSpacing);
+            //    if (newStaticallyLinkedAudioClipsOption != manager.staticallyLinkedAudioClips)
+            //    {
+            //        manager.staticallyLinkedAudioClips = newStaticallyLinkedAudioClipsOption;
+            //        if (newStaticallyLinkedAudioClipsOption == true)
+            //        {
+            //            foreach (var audioComponent in ManagerData.audioComponentData)
+            //            {
+            //                if (audioComponent is SoundSFX soundSFX)
+            //                {
+            //                    if (soundSFX.clip == null)
+            //                    {
+            //                        LoadSoundSFXAudioClip(soundSFX);
+            //                    }
+            //                }
+            //            }
+            //        }
+            //        else
+            //        {
+            //            foreach (var audioComponent in ManagerData.audioComponentData)
+            //            {
+            //                if (audioComponent is SoundSFX soundSFX)
+            //                {
+            //                    soundSFX.clip = null;
+            //                }
+            //            }
+            //        }
+            //    }
+
+            //    manager.autoLoadDataAsset =
+            //        EditorGUILayout.ToggleLeft(new GUIContent("自动加载配置文件"), manager.autoLoadDataAsset);
+
+
+            //    AudioConfiguration config = AudioSettings.GetConfiguration();
+            //    var newRealVoiceNumer =
+            //        EditorGUILayout.IntSlider(new GUIContent("RealVoicesNumer", "游戏中当前可同时听到的最大声音数"),
+            //            config.numRealVoices, 1, 512);
+            //    if (newRealVoiceNumer != config.numRealVoices)
+            //    {
+            //        config.numRealVoices = newRealVoiceNumer;
+            //        AudioSettings.Reset(config);
+            //    }
+
+            //    EditorGUILayout.Space();
+
+            //    EditorGUILayout.BeginHorizontal();
+            //    EditorGUILayout.PrefixLabel("ResourceDataPath");
+            //    using (new EditorGUI.DisabledGroupScope(true))
+            //    {
+            //        EditorGUILayout.LabelField(manager.programPath);
+            //    }
+
+            //    if (GUILayout.Button("更改"))
+            //    {
+            //        Debug.Log(FolderBrowserHelper.GetPathFromWindowsExplorer("请选择文件路径"));
+            //    }
+            //    EditorGUILayout.EndHorizontal();
+            //    EditorGUI.EndDisabledGroup();
+            //}
+
+            //GUI.color = backgroundBoxColor;
+            //using (new EditorGUILayout.VerticalScope("box", GUILayout.ExpandWidth(false), GUILayout.ExpandHeight(true)))
+            //{
+            //    GUI.color = preGUIColor;
+            //    EditorGUILayout.LabelField(new GUIContent("UI Setting", "此部分选项为编辑器UI的设定，与组件无关"), EditorStyles.boldLabel);
+            //    AudioConfiguration config = AudioSettings.GetConfiguration();
+            //    editorViewData.freshPageWhenTabInexChange =
+            //        EditorGUILayout.ToggleLeft(new GUIContent("当选择变更时是否刷新页面"), editorViewData.freshPageWhenTabInexChange);
+            //    GUILayout.Space(EditorGUIUtility.standardVerticalSpacing);
+            //}
+
+            #endregion
+            EditorGUI.EndDisabledGroup();
 
             if (EditorGUI.EndChangeCheck())
             {
-                manager.SyncPlayableData(currentSelectData.id,AudioComponentDataChangeType.OtherSetting);
-                Debug.Log("数据刷新 In OtherSetting");
+                manager.SyncDataToPlayable(currentSelectData.id, AudioComponentDataChangeType.OtherSetting);
+                //Debug.Log("数据刷新 In OtherSetting");
             }
         }
 
@@ -3106,14 +4645,15 @@ namespace ypzxAudioEditor
 
         private void DrawPreviewWindow()
         {
-            if (manager.PlayableList.Count == 0)
+            if (manager.PlayableInstanceList.Find(x => x.playableOutput.GetUserData() == previewObject) == null)
             {
                 previewState = PreviewModeState.Stoped;
             }
 
-            if (data.ProjectExplorerTabIndex != (int)ProjectExplorerTab.Audio)
+            if (editorViewData.ProjectExplorerTabIndex != (int)AudioEditorDataType.Audio && previewState == PreviewModeState.Playing)
             {
                 manager.ApplyAudioComponentPreview(previewObject, AEEventType.StopAll);
+                previewState = PreviewModeState.Stoped;
             }
             EditorGUILayout.BeginHorizontal();
 
@@ -3128,71 +4668,116 @@ namespace ypzxAudioEditor
                 // GUI.color = Color.Lerp(Color.white, Color.black, 0.2f);
                 EditorGUILayout.BeginHorizontal();
                 GUILayoutOption[] buttonOption = { GUILayout.Width(64), GUILayout.Height(64) };
-                if (GUILayout.Button(IconUtility.GetIconContent(PreviewIconType.Stop_off, "Stop"), GUI.skin.button, buttonOption))
+                if (GUILayout.Button(IconUtility.GetIconContent(PreviewIconType.StopOff, "Stop"), GUI.skin.button, buttonOption))
                 {
-                    previewState = PreviewModeState.Stoped;
                     manager.ApplyAudioComponentPreview(previewObject, AEEventType.StopAll);
+                    previewState = PreviewModeState.Stoped;
                 }
 
-                var pauseIcontype = previewState == PreviewModeState.Paused ? PreviewIconType.Pause_on : PreviewIconType.Pause_off;
+                var pauseIcontype = previewState == PreviewModeState.Paused ? PreviewIconType.PauseOn : PreviewIconType.PauseOff;
                 if (GUILayout.Button(IconUtility.GetIconContent(pauseIcontype, "Pause"), GUI.skin.button, buttonOption))
                 {
+                    manager.ApplyAudioComponentPreview(previewObject, AEEventType.Pause, editorViewData.myTreeViewStates[0].lastClickedID);
                     previewState = PreviewModeState.Paused;
-                    manager.ApplyAudioComponentPreview(previewObject, AEEventType.Pause, data.MyTreeViewStates[0].lastClickedID);
                 }
 
-                var playIconType = previewState == PreviewModeState.playing ? PreviewIconType.Play_on : PreviewIconType.Play_off;
+                var playIconType = previewState == PreviewModeState.Playing ? PreviewIconType.PlayOn : PreviewIconType.PlayOff;
                 var playTipLabel = previewState == PreviewModeState.Paused ? "Resume" : "Play";
                 if (GUILayout.Button(IconUtility.GetIconContent(playIconType, playTipLabel), GUI.skin.button, buttonOption))
                 {
                     if (previewState == PreviewModeState.Paused)
                     {
-                        manager.ApplyAudioComponentPreview(previewObject, AEEventType.Resume, data.MyTreeViewStates[0].lastClickedID);
-                        previewState = PreviewModeState.playing;
+                        manager.ApplyAudioComponentPreview(previewObject, AEEventType.Resume, editorViewData.myTreeViewStates[0].lastClickedID);
                     }
                     else
                     {
-                        if (data.ProjectExplorerTabIndex == (int)ProjectExplorerTab.Audio &&
-                            AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(data.MyTreeViewStates[0].lastClickedID) != null)
+                        if (editorViewData.ProjectExplorerTabIndex == (int)AudioEditorDataType.Audio &&
+                            AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(editorViewData.myTreeViewStates[0].lastClickedID) != null)
                         {
-                            manager.ApplyAudioComponentPreview(previewObject, AEEventType.Play, data.MyTreeViewStates[0].lastClickedID);
+                            manager.ApplyAudioComponentPreview(previewObject, AEEventType.Play, editorViewData.myTreeViewStates[0].lastClickedID);
                         }
-                        previewState = PreviewModeState.playing;
                     }
+                    previewState = PreviewModeState.Playing;
                 }
                 GUI.color = color;
-                previewWindowGridSelected = GUILayout.SelectionGrid(previewWindowGridSelected, previewWindowGridButtonName, 2, GUILayout.Width(150), GUILayout.ExpandWidth(false));
 
+                if (Event.current.type == EventType.KeyDown && Event.current.keyCode == KeyCode.Space)
+                {
+                    switch (previewState)
+                    {
+                        case PreviewModeState.Playing:
+                            manager.ApplyAudioComponentPreview(previewObject, AEEventType.StopAll);
+                            previewState = PreviewModeState.Stoped;
+                            break;
+                        case PreviewModeState.Paused:
+                            manager.ApplyAudioComponentPreview(previewObject, AEEventType.Resume, editorViewData.myTreeViewStates[0].lastClickedID);
+                            previewState = PreviewModeState.Playing;
+                            break;
+                        case PreviewModeState.Stoped:
+                            if (editorViewData.ProjectExplorerTabIndex == (int)AudioEditorDataType.Audio &&
+                                AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(editorViewData.myTreeViewStates[0].lastClickedID) != null)
+                            {
+                                manager.ApplyAudioComponentPreview(previewObject, AEEventType.Play, editorViewData.myTreeViewStates[0].lastClickedID);
+                            }
+                            previewState = PreviewModeState.Playing;
+                            break;
+                        default:
+                            throw new ArgumentOutOfRangeException();
+                    }
+
+                    Event.current.Use();
+                }
+
+                previewWindowGridSelected = GUILayout.SelectionGrid(previewWindowGridSelected, previewWindowGridButtonName, 2, GUILayout.Width(150), GUILayout.ExpandWidth(false));
                 EditorGUILayout.EndHorizontal();
-                EditorGUI.ProgressBar(EditorGUILayout.GetControlRect(), 0.2f, "");
-                EditorGUI.ProgressBar(EditorGUILayout.GetControlRect(), 0.2f, "");
+                AudioListener.GetOutputData(outputVolumeData, 0);
+                EditorGUI.ProgressBar(EditorGUILayout.GetControlRect(GUILayout.ExpandHeight(true)), outputVolumeData.Max(), "");
+                AudioListener.GetOutputData(outputVolumeData, 1);
+                EditorGUI.ProgressBar(EditorGUILayout.GetControlRect(GUILayout.ExpandHeight(true)), outputVolumeData.Max(), "");
                 EditorGUILayout.EndVertical();
             }
-
+            //根据当前选择组件绘制选项框中的涉及的内容
             GUI.color = backgroundBoxColor;
             using (new EditorGUILayout.VerticalScope("box", GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(true)))
             {
                 GUI.color = preGUIColor;
-                if (data.ProjectExplorerTabIndex == (int)ProjectExplorerTab.Audio)
+                if (editorViewData.ProjectExplorerTabIndex == (int)AudioEditorDataType.Audio)
                 {
-                    var currentSelectID = data.MyTreeViewStates[data.ProjectExplorerTabIndex].lastClickedID;
+                    var currentSelectID = editorViewData.myTreeViewStates[editorViewData.ProjectExplorerTabIndex].lastClickedID;
                     if (AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(currentSelectID) is AEAudioComponent audiocomponentData)
                     {
-                        //TODO：补全预览窗口的功能
                         switch (previewWindowGridSelected)
                         {
                             case 0:
                                 //states
-                                foreach (var stateSetting in audiocomponentData.StateSettings)
+                                var tempStateGroupSet = new HashSet<StateGruop>();
+                                //获取子类中的StateSetting
+                                if (audiocomponentData is IAEContainer container)
+                                {
+                                    var containerChildrenSet = new HashSet<AEAudioComponent>();
+                                    AudioEditorManager.GetContainerAllChildren(container, ref containerChildrenSet);
+                                    foreach (var childAudioComponent in containerChildrenSet)
+                                    {
+                                        foreach (var stateSetting in childAudioComponent.stateSettings)
+                                        {
+                                            var stateGroup = AudioEditorManager.GetAEComponentDataByID<StateGruop>(stateSetting.stateGroupId);
+                                            tempStateGroupSet.Add(stateGroup);
+                                        }
+                                    }
+                                }
+                                //获取本组件的StateSetting
+                                foreach (var stateSetting in audiocomponentData.stateSettings)
+                                {
+                                    var stateGroup = AudioEditorManager.GetAEComponentDataByID<StateGruop>(stateSetting.stateGroupId);
+                                    tempStateGroupSet.Add(stateGroup);
+                                }
+                                //绘制组件
+                                foreach (var stateGroup in tempStateGroupSet)
                                 {
                                     EditorGUILayout.BeginHorizontal();
-                                    var stateGroup =
-                                        AudioEditorManager
-                                            .GetAEComponentDataByID<StateGruop>(stateSetting.stateGroupId) as StateGruop;
                                     EditorGUILayout.PrefixLabel(stateGroup.name);
                                     var buttonRect = EditorGUILayout.GetControlRect();
-                                    if (EditorGUI.DropdownButton(buttonRect,
-                                        new GUIContent(stateGroup.FindState(stateGroup.currentStateID).name),
+                                    if (EditorGUI.DropdownButton(buttonRect, new GUIContent(stateGroup.GetState(stateGroup.currentStateID).name),
                                         FocusType.Passive))
                                     {
                                         var menu = new GenericMenu();
@@ -3211,9 +4796,117 @@ namespace ypzxAudioEditor
                                 break;
                             case 1:
                                 //rtpcs
+                                var gameParameterSet = new HashSet<GameParameter>();
+                                if (audiocomponentData is IAEContainer)
+                                {
+                                    var containerChildrenSet = new HashSet<AEAudioComponent>();
+                                    AudioEditorManager.GetContainerAllChildren(audiocomponentData as IAEContainer, ref containerChildrenSet);
+                                    foreach (var childAudioComponent in containerChildrenSet)
+                                    {
+                                        foreach (var gameParameterCurveSetting in childAudioComponent.gameParameterCurveSettings)
+                                        {
+                                            gameParameterSet.Add(
+                                                AudioEditorManager.GetAEComponentDataByID<GameParameter>(
+                                                    gameParameterCurveSetting.gameParameterId));
+                                        }
+
+                                        if (childAudioComponent is BlendContainer childBlendContainer)
+                                        {
+                                            foreach (var blendContainerTrack in childBlendContainer.blendContainerTrackList.Where(blendContainerTrack => blendContainerTrack.gameParameterId != -1))
+                                            {
+                                                gameParameterSet.Add(AudioEditorManager.GetAEComponentDataByID<GameParameter>(
+                                                    blendContainerTrack.gameParameterId));
+                                            }
+                                        }
+                                    }
+
+                                    if (audiocomponentData is BlendContainer blendContainer)
+                                    {
+                                        foreach (var blendContainerTrack in blendContainer.blendContainerTrackList.Where(blendContainerTrack => blendContainerTrack.gameParameterId != -1))
+                                        {
+                                            gameParameterSet.Add(AudioEditorManager.GetAEComponentDataByID<GameParameter>(
+                                                blendContainerTrack.gameParameterId));
+                                        }
+                                    }
+                                }
+                                foreach (var gameParameterCurveSetting in audiocomponentData.gameParameterCurveSettings)
+                                {
+
+                                    var gameParameter = AudioEditorManager.GetAEComponentDataByID<GameParameter>(gameParameterCurveSetting.gameParameterId);
+                                    if (gameParameter != null)
+                                    {
+                                        gameParameterSet.Add(gameParameter);
+                                    }
+                                }
+
+                                foreach (var gameParameter in gameParameterSet)
+                                {
+                                    if (gameParameter != null)
+                                    {
+                                        var newValue = EditorGUILayout.Slider(new GUIContent(gameParameter.name),
+                                            gameParameter.Value, gameParameter.MinValue, gameParameter.MaxValue);
+                                        if (Math.Abs(newValue - gameParameter.Value) > 0.01)
+                                        {
+                                            Repaint();
+                                            AudioEditorManager.SetGameParameter(gameParameter.id, newValue);
+                                        }
+                                    }
+                                }
+
                                 break;
                             case 2:
                                 //swithes
+                                var switchGroupSet = new HashSet<SwitchGroup>();
+                                if (audiocomponentData is IAEContainer)
+                                {
+                                    var containerChildrenSet = new HashSet<AEAudioComponent>();
+                                    AudioEditorManager.GetContainerAllChildren(audiocomponentData as IAEContainer, ref containerChildrenSet);
+                                    foreach (var childAudioComponent in containerChildrenSet)
+                                    {
+                                        if (childAudioComponent is SwitchContainer switchContainer)
+                                        {
+                                            var switchGroup = AudioEditorManager.GetAEComponentDataByID<SwitchGroup>(switchContainer.switchGroupID);
+                                            if (switchGroup != null)
+                                            {
+                                                switchGroupSet.Add(switchGroup);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if (audiocomponentData is SwitchContainer)
+                                {
+                                    var switchGroup = AudioEditorManager.GetAEComponentDataByID<SwitchGroup>((audiocomponentData as SwitchContainer).switchGroupID);
+                                    if (switchGroup != null)
+                                    {
+                                        switchGroupSet.Add(switchGroup);
+                                    }
+                                }
+
+                                foreach (var switchGroup in switchGroupSet)
+                                {
+                                    EditorGUILayout.BeginHorizontal();
+                                    EditorGUILayout.PrefixLabel(switchGroup.name);
+                                    var buttonRect = EditorGUILayout.GetControlRect();
+                                    var buttonName = switchGroup.GetSwitch(switchGroup.currentSwitchID) == null
+                                        ? ""
+                                        : switchGroup.GetSwitch(switchGroup.currentSwitchID).name;
+                                    if (EditorGUI.DropdownButton(buttonRect, new GUIContent(buttonName),
+                                        FocusType.Passive))
+                                    {
+                                        var menu = new GenericMenu();
+                                        for (int i = 0; i < switchGroup.SwitchListCount; i++)
+                                        {
+                                            var aeSwitch = switchGroup.GetSwitchAt(i);
+                                            menu.AddItem(new GUIContent(aeSwitch.name), false, (selectedSwitch) =>
+                                            {
+                                                manager.ApplyAudioComponentPreview(previewObject, AEEventType.SetSwitch, (selectedSwitch as Switch).id);
+                                            }, aeSwitch);
+                                        }
+                                        menu.DropDown(buttonRect);
+                                    }
+                                    EditorGUILayout.EndHorizontal();
+                                }
                                 break;
                             case 3:
                                 //triggers
@@ -3222,9 +4915,11 @@ namespace ypzxAudioEditor
                     }
 
                 }
-
             }
+
             EditorGUILayout.EndHorizontal();
+
+
         }
         #endregion
 
@@ -3233,23 +4928,276 @@ namespace ypzxAudioEditor
         /// </summary>
         private void DataRegisterToUndo()
         {
-            Undo.RegisterCompleteObjectUndo(data, "AudioEditorWindow Change");
+            Undo.RegisterCompleteObjectUndo(editorViewData, "AudioEditorWindow Change");
             Undo.RegisterCompleteObjectUndo(ManagerData, "AudioEditorWindow Change");
             Undo.IncrementCurrentGroup();
             //Debug.Log("DataRegisterToUndo.");
         }
 
-
-        private void CheckGUIDAndPathWhenClipLoad(SoundSFX soundSFX)
+        /// <summary>
+        /// 保存数据
+        /// </summary>
+        private void SaveData()
         {
-            var path = AssetDatabase.GetAssetPath(soundSFX.clip);
-            var guid= AssetDatabase.AssetPathToGUID(path);
-            if (path != soundSFX.clipAssetPath || guid != soundSFX.clipGUID)
+            var fileDataList = new List<AudioEditorData>();
+            for (int i = 0; i < MyTreeLists.TreeListCount; i++)
             {
-                soundSFX.clipAssetPath = path;
-                soundSFX.clipGUID = guid;
+                var dataPath = $"{AudioEditorManager.RuntimeDataFolder}/AudioEditorData_{projectExplorerTabNames[i]}/";
+                SaveDataToFile(myTreeModels[i].root, dataPath, i, null, ref fileDataList);
+            }
+
+            //寻找多余的旧文件
+            var allFileDataGUIDs = AssetDatabase.FindAssets("t:AudioEditorData", new[] { AudioEditorManager.RuntimeDataFolder });
+            for (int i = 0; i < allFileDataGUIDs.Length; i++)
+            {
+                var filePath = AssetDatabase.GUIDToAssetPath(allFileDataGUIDs[i]);
+                if (fileDataList.Exists(x =>
+                {
+                    AssetDatabase.TryGetGUIDAndLocalFileIdentifier(x, out var guid, out long localId);
+                    return guid == allFileDataGUIDs[i];
+                }) == false)
+                {
+                    AssetDatabase.MoveAssetToTrash(filePath);
+                    AudioEditorDebugLog.Log("移除文件:" + filePath);
+                }
+            }
+
+            EditorUtility.SetDirty(editorViewData);
+            EditorUtility.SetDirty(ManagerData);
+            foreach (var audioEditorData in fileDataList)
+            {
+                EditorUtility.SetDirty(audioEditorData);
+            }
+            EditorUtility.SetDirty(manager);
+            AssetDatabase.SaveAssets();
+            if (EditorApplication.isPlaying == false)
+            {
+                //TODO 在runtime时候会报错
+                EditorSceneManager.SaveScene(SceneManager.GetActiveScene());
             }
         }
+
+        /// <summary>
+        /// 递归方法将数据存至文件中
+        /// </summary>
+        /// <param name="treeElement">要遍历的节点</param>
+        /// <param name="dataPath">当前储存数据的路径，不包含具体文件名</param>
+        /// <param name="whichTreeList">当前对哪一颗树进行操作，参考AudioEditorDataType</param>
+        /// <param name="parentData">节点所对应的workunit文件</param>
+        /// <param name="fileDataList">返回所有文件列表</param>
+        private void SaveDataToFile(MyTreeElement treeElement, string dataPath, int whichTreeList, AudioEditorData parentData, ref List<AudioEditorData> fileDataList)
+        {
+            var audioEditorData = parentData;
+            if (treeElement.type == AEComponentType.WorkUnit)
+            {
+                audioEditorData = AssetDatabase.LoadAssetAtPath<AudioEditorData>(dataPath + treeElement.name + ".asset");
+
+                //原本存在文件
+                if (audioEditorData != null)
+                {
+                    //清空原来的数据，以免有冗余的已删除数据
+                    audioEditorData.myTreeLists[whichTreeList].Clear();
+                    switch ((AudioEditorDataType)whichTreeList)
+                    {
+                        case AudioEditorDataType.Audio:
+                            audioEditorData.audioComponentData.Clear();
+                            break;
+                        case AudioEditorDataType.Events:
+                            audioEditorData.eventData.Clear();
+                            break;
+                        case AudioEditorDataType.GameSyncs:
+                            audioEditorData.gameSyncsData.Clear();
+                            break;
+                        default:
+                            throw new ArgumentOutOfRangeException(nameof(whichTreeList), whichTreeList, null);
+                    }
+                }
+                else
+                {
+                    //原本不存在文件
+                    audioEditorData = CreateInstance<AudioEditorData>();
+                    if (System.IO.Directory.Exists(dataPath) == false)
+                    {
+                        System.IO.Directory.CreateDirectory(dataPath);
+                    }
+                    AssetDatabase.CreateAsset(audioEditorData, dataPath + treeElement.name + ".asset");
+                    if (AudioEditorManager.debugMode)
+                    {
+                        AudioEditorDebugLog.Log("CreateAsset:" + treeElement.name);
+                    }
+                }
+
+                fileDataList.Add(audioEditorData);
+                //文件以自身节点开始
+                audioEditorData.myTreeLists[whichTreeList].Add(treeElement);
+
+            }
+
+            if (treeElement.type != AEComponentType.WorkUnit)
+            {
+                switch ((AudioEditorDataType)whichTreeList)
+                {
+                    case AudioEditorDataType.Audio:
+                        audioEditorData.audioComponentData.Add(AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(treeElement.id));
+                        break;
+                    case AudioEditorDataType.Events:
+                        audioEditorData.eventData.Add(AudioEditorManager.GetAEComponentDataByID<AEEvent>(treeElement.id));
+                        break;
+                    case AudioEditorDataType.GameSyncs:
+                        audioEditorData.gameSyncsData.Add(AudioEditorManager.GetAEComponentDataByID<AEGameSyncs>(treeElement.id));
+                        break;
+                    default:
+                        throw new ArgumentOutOfRangeException(nameof(whichTreeList), whichTreeList, null);
+                }
+            }
+
+            if (treeElement.hasChildren)
+            {
+                foreach (var treeElementChild in treeElement.children)
+                {
+                    if (treeElementChild is MyTreeElement myTreeElementChild)
+                    {
+                        audioEditorData.myTreeLists[whichTreeList].Add(myTreeElementChild);
+
+                        SaveDataToFile(myTreeElementChild, dataPath, whichTreeList, audioEditorData, ref fileDataList);
+                    }
+
+                }
+            }
+        }
+
+        /// <summary>
+        /// 为Manager.audioEditorData生成一个临时文件，以避免进入playMode时已进行修改的操作被重置
+        /// </summary>
+        private void CreateTempFile()
+        {
+            if (ManagerData != null)
+            {
+                if (AssetDatabase.TryGetGUIDAndLocalFileIdentifier(ManagerData, out string guid, out long localId))
+                {
+                    return;
+                }
+                var path = AudioEditorManager.EditorTempFilePath;
+                if (System.IO.File.Exists(path))
+                {
+                    Debug.Log("delete");
+                    AssetDatabase.DeleteAsset(path);
+                }
+                AssetDatabase.CreateAsset(ManagerData, path);
+            }
+            else
+            {
+                AudioEditorDebugLog.LogError("ManagerData未进行初始化");
+            }
+        }
+
+        /// <summary>
+        /// 清除临时文件
+        /// </summary>
+        private void ClearTempFile()
+        {
+            if (ManagerData != null)
+            {
+                if (AssetDatabase.TryGetGUIDAndLocalFileIdentifier(ManagerData, out string guid, out long localId))
+                {
+                    var path = AssetDatabase.GUIDToAssetPath(guid);
+                    AssetDatabase.DeleteAsset(path);
+                }
+            }
+            //删除文件后Data会为null，如果是自动加载数据时应该再重载
+            if (ManagerData == null && manager.autoLoadDataAsset)
+            {
+                AudioEditorManager.LoadDataAsset(true);
+            }
+        }
+
+
+        /// <summary>
+        /// 对所有音频文件的位置否进行纠错检查
+        /// </summary>
+        private void CheckSoundSFXClipPath()
+        {
+            if (ManagerData != null)
+            {
+                foreach (var audioComponent in ManagerData.audioComponentData)
+                {
+                    if (audioComponent is SoundSFX soundSFX)
+                    {
+                        if (soundSFX.clipGUID != "" || soundSFX.clipAssetPath != "")
+                            if (System.IO.File.Exists(soundSFX.clipAssetPath) == false)
+                            {
+                                var newPath = AssetDatabase.GUIDToAssetPath(soundSFX.clipGUID);
+                                if (System.IO.File.Exists(newPath))
+                                {
+                                    AudioEditorDebugLog.LogWarning($"发现组件 {soundSFX.name} 所链接的音频文件路径修改，已刷新数据，移动前路径：{soundSFX.clipAssetPath}，移动后路径：{newPath}");
+                                    soundSFX.clipAssetPath = newPath;
+                                }
+                                else
+                                {
+                                    AudioEditorDebugLog.LogError($"发现组件 {soundSFX.name} 所链接的音频文件已丢失，请检查，原文件路径为：{soundSFX.clipAssetPath}");
+                                }
+                            }
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// 加载SoundSFX的音频文件
+        /// </summary>
+        /// <param name="soundSFX"></param>
+        internal static void LoadSoundSFXAudioClip(SoundSFX soundSFX)
+        {
+            if (soundSFX.clipAssetPath != "" || soundSFX.clipGUID != "")
+            {
+                if (soundSFX.clip == null)
+                {
+                    //通过路径获取文件
+                    soundSFX.clip = AssetDatabase.LoadAssetAtPath<AudioClip>(soundSFX.clipAssetPath);
+                }
+
+                if (soundSFX.clip == null)
+                {
+                    //路径已被修改，通过GUID获取文件
+                    var path = AssetDatabase.GUIDToAssetPath(soundSFX.clipGUID);
+                    soundSFX.clip = AssetDatabase.LoadAssetAtPath<AudioClip>(path);
+                    if (soundSFX.clip != null)
+                        soundSFX.clipAssetPath = path;
+                }
+
+                if (soundSFX.clip == null && soundSFX.clipAssetPath != "")
+                {
+                    //路径和GUID都无法获取文件，文件可能已被删除，发出警告
+                    AudioEditorDebugLog.LogError($"组件名:{soundSFX.name}，id:{soundSFX.id}, 无法加载AudioClip，请检查文件列表，路径为{soundSFX.clipAssetPath}");
+                    soundSFX.clipAssetPath = "";
+                }
+
+                if (soundSFX.clip != null)
+                {
+                    //加载成功刷新路径和GUID
+                    FreshGuidAndPathWhenClipLoad(soundSFX);
+                }
+            }
+        }
+
+        /// <summary>
+        /// 当SoundSFX的Clip修改时对GUID和Path进行刷新
+        /// </summary>
+        /// <param name="soundSFX"></param>
+        private static void FreshGuidAndPathWhenClipLoad(SoundSFX soundSFX)
+        {
+            if (soundSFX.clip != null)
+            {
+                var path = AssetDatabase.GetAssetPath(soundSFX.clip);
+                var guid = AssetDatabase.AssetPathToGUID(path);
+                if (path != soundSFX.clipAssetPath || guid != soundSFX.clipGUID)
+                {
+                    soundSFX.clipAssetPath = path;
+                    soundSFX.clipGUID = guid;
+                }
+            }
+        }
+
         /// <summary>
         /// 将当前页面的数据进行深度复制
         /// </summary>
@@ -3257,9 +5205,10 @@ namespace ypzxAudioEditor
         /// <param name="targetIDs"></param>
         private void DeepCopypropertyEditorTabPageData(AEAudioComponent resourceData, HashSet<int> targetIDs)
         {
+            //TODO 完善深度复制的功能
             foreach (var targetID in targetIDs)
             {
-                var targetData = AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(targetID) as AEAudioComponent;
+                var targetData = AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(targetID);
                 if (targetData == null || targetID == resourceData.id) continue;
                 switch (PropertyEditorTabIndex)
                 {
@@ -3279,7 +5228,7 @@ namespace ypzxAudioEditor
                         targetData.outputMixer = resourceData.outputMixer;
                         break;
                     case PropertyEditorTab.Effects:
-                        Debug.Log("未完成");
+                        Debug.LogError("未完成");
                         break;
                     case PropertyEditorTab.Attenuation:
                         targetData.spatialBlend = resourceData.spatialBlend;
@@ -3302,9 +5251,9 @@ namespace ypzxAudioEditor
                         targetData.gameParameterCurveSettings.Clear();
                         resourceData.gameParameterCurveSettings.ForEach(curveSetting =>
                         {
-                            var newData = new GameParameterCurveSetting(curveSetting.targetType);
+                            var newData = new GameParameterCurveSetting(curveSetting.targetType, curveSetting.gameParameterId);
                             newData.curveData.keys = curveSetting.curveData.keys;
-                            newData.gameParameterID = curveSetting.gameParameterID;
+                            // newData.gameParameterId = curveSetting.gameParameterId;
                             targetData.gameParameterCurveSettings.Add(newData);
                         });
                         break;
@@ -3313,82 +5262,36 @@ namespace ypzxAudioEditor
                         break;
                     case PropertyEditorTab.OtherSetting:
                         targetData.unloadClipWhenPlayEnd = resourceData.unloadClipWhenPlayEnd;
+                        targetData.stopWhenGameObjectDestroy = resourceData.stopWhenGameObjectDestroy;
                         targetData.priority = resourceData.priority;
+                        targetData.limitPlayNumber = resourceData.limitPlayNumber;
                         break;
                 }
-                manager.SyncPlayableData(targetData.id,AudioComponentDataChangeType.General);
+                //TODO 应该有多种类型的数据同步
+                manager.SyncDataToPlayable(targetData.id, AudioComponentDataChangeType.General);
             }
         }
 
         /// <summary>
-        /// 水平分隔栏的位置
+        /// 获取当前标签页的匹配id的树元素
         /// </summary>
-        float CurrentHorizontalSpliterHeight
+        /// <param name="id">想要获取的元素的id</param>
+        /// <returns></returns>
+        public MyTreeElement GetTreeListElementByID(int id)
         {
-            get { return data._currentHorizontalSpliterHeight; }
-            set
-            {
-                if (value < 60)
-                {
-                    data._currentHorizontalSpliterHeight = 50;
-                    return; ;
-                }
-
-                if (value > position.height - 60)
-                {
-                    data._currentHorizontalSpliterHeight = position.height - 50;
-                    return;
-                }
-                data._currentHorizontalSpliterHeight = value;
-            }
-        }
-        /// <summary>
-        /// 竖直分隔栏的位置
-        /// </summary>
-        public float CurrentVerticalSpliterWidth
-        {
-            get { return data._currentVerticalSpliterWidth; }
-            set
-            {
-                if (value < 60)
-                {
-                    data._currentVerticalSpliterWidth = 50;
-                    return;
-                }
-
-                if (value > position.width - 60)
-                {
-                    data._currentVerticalSpliterWidth = position.width - 50;
-                    return;
-                }
-                data._currentVerticalSpliterWidth = value;
-            }
+            return ManagerData.myTreeLists[editorViewData.ProjectExplorerTabIndex].Find(x => x.id == id);
         }
 
-        private AudioEditorData ManagerData
-        {
-            get => AudioEditorManager.Data;
-            set => AudioEditorManager.Data = value;
-        }
-
-        public static readonly Color[] ColorRankList =
-        {
-            Color.red,
-            Color.blue,
-            Color.green,
-            Color.cyan,
-            Color.magenta,
-            Color.yellow,
-            new Color(65 / 255f, 105 / 255f, 225 / 255f),
-            new Color(0, 191 / 255f, 1),
-            new Color(0, 1, 1),
-        };
-
-        // public static readonly Dictionary<string,Color> ColorRank = new Dictionary<string,Color>
-        // {
-        //     {"Volume",Color.red},
-        //     {"Pitch",Color.blue}
-        // };
     }
 
+    /// <summary>
+    /// 用于储存分隔栏的数据
+    /// </summary>
+    internal class SpliterData : ScriptableSingleton<SpliterData>
+    {
+        //继承自ScriptableSingleton的类可以将数据保存在编辑器内部中，这样在代码重编译时数据也不会丢失，并且在多人协作时具有各自不同的值
+        //此项数据在关闭Unity工程后会被清除，可以与EditorPrefs配合使用做到数据的保存，不应用于保存重要数据
+        public float Width { get; set; } = 360;
+        public float Height { get; set; } = 580;
+    }
 }

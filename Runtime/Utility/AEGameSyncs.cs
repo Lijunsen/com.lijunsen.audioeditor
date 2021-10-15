@@ -1,16 +1,12 @@
-﻿using System.Collections;
-using System.Collections.Generic;
-using UnityEngine;
-
-namespace ypzxAudioEditor.Utility
+﻿namespace AudioEditor.Runtime.Utility
 {
     [System.Serializable]
-    public class AEGameSyncs : AEComponent
+    internal class AEGameSyncs : AEComponent
     {
-        public AEGameSyncs(string name, int id):base(name,id)
+        public AEGameSyncs(string name, int id) : base(name, id)
         {
 
         }
-        
+
     }
 }

@@ -1,14 +1,11 @@
 ﻿using System;
-using System.Collections;
 using System.Collections.Generic;
-using Unity.Collections;
 using UnityEngine;
 using UnityEngine.Audio;
-using UnityEngine.Rendering;
 
-namespace ypzxAudioEditor.Utility
+namespace AudioEditor.Runtime.Utility
 {
-    public abstract class AEComponent
+    internal abstract class AEComponent
     {
         public string name;
         public int id;
@@ -25,7 +22,7 @@ namespace ypzxAudioEditor.Utility
     }
 
     [Serializable]
-    public abstract class AEAudioComponent : AEComponent
+    internal abstract class AEAudioComponent : AEComponent
     {
         public AEComponentType unitType;
         public AudioMixerGroup outputMixer;
@@ -37,24 +34,36 @@ namespace ypzxAudioEditor.Utility
         public bool loopInfinite;
         public int loopTimes = 2;
 
-        //用于在UI中隐藏或显示某些控件，与生成逻辑无关
+
+        /// <summary>
+        /// 用于在UI中隐藏或显示某些控件，与生成逻辑无关,其值可能会未及时更新
+        /// </summary>
         public bool isContianerChild;
 
         public bool fadeIn = false;
         public float fadeInTime;
-        public FadeType fadeInType;
+        public EasingCore.EaseType fadeInType;
 
         public bool fadeOut = false;
         public float fadeOutTime;
-        public FadeType fadeOutType;
+        public EasingCore.EaseType fadeOutType;
 
-        public float delayTime;
 
         public bool unloadClipWhenPlayEnd = false;
         public bool stopWhenGameObjectDestroy = false;
 
         public float volume = 1;
+        public bool randomVolume = false;
+        public float minVolume = 0;
+        public float maxVolume = 1;
+
         public float pitch = 1;
+        public bool randomPitch = false;
+        public float minPitch = 0;
+        public float maxPitch = 1;
+
+        public float delayTime;
+
         public float panStereo = 0;
         public float spatialBlend = 0;
         public float reverbZoneMix = 1;
@@ -64,69 +73,85 @@ namespace ypzxAudioEditor.Utility
 
         public int limitPlayNumber = 6;
 
+        public float tempo = 120;
+        public int beatsPerMeasure = 4;
+        public float offset = 0;
+
 
         [SerializeField]
-        private float _minDistance = 1;
+        private float minDistance = 1;
         [SerializeField]
-        private float _maxDistance = 500;
-        public List<AttenuationCurveSetting> attenuationCurveSettings = new List<AttenuationCurveSetting>();
-        public List<GameParameterCurveSetting> gameParameterCurveSettings = new List<GameParameterCurveSetting>();
+        private float maxDistance = 500;
+        public List<AttenuationCurveSetting> attenuationCurveSettings;
+        public List<GameParameterCurveSetting> gameParameterCurveSettings;
         [SerializeReference]
-        public List<AEEffect> effectSettings = new List<AEEffect>();
+        public List<AEEffect> effectSettings;
 
-        public List<StateSetting> StateSettings = new List<StateSetting>();
-
-        public AEAudioComponent(string name, int id, AEComponentType type) : base(name, id)
-        {
-            unitType = type;
-            attenuationCurveSettings = new List<AttenuationCurveSetting>();
-            gameParameterCurveSettings = new List<GameParameterCurveSetting>();
-            StateSettings = new List<StateSetting>();
-        }
-
+        public List<StateSetting> stateSettings;
+        
+        public AEComponentDataOverrideType overrideFunctionType;
 
         public float MinDistance
         {
-            get => _minDistance;
+            get => minDistance;
             set
             {
                 if (value < 0)
                 {
-                    _minDistance = 0;
+                    minDistance = 0;
                     return;
                 }
 
                 if (value > MaxDistance)
                 {
-                    _minDistance = MaxDistance - 0.01f;
+                    minDistance = MaxDistance - 0.01f;
                     return;
                 }
-                _minDistance = value;
+                minDistance = value;
             }
         }
 
         public float MaxDistance
         {
-            get => _maxDistance;
+            get => maxDistance;
             set
             {
-                if (value < _minDistance)
+                if (value < minDistance)
                 {
-                    _maxDistance = _minDistance + 0.01f;
+                    maxDistance = minDistance + 0.01f;
                     return;
                 }
-                _maxDistance = value;
+                maxDistance = value;
             }
         }
 
+        public AEAudioComponent(string name, int id, AEComponentType type) : base(name, id)
+        {
+            unitType = type;
+            effectSettings = new List<AEEffect>();
+            attenuationCurveSettings = new List<AttenuationCurveSetting>();
+            gameParameterCurveSettings = new List<GameParameterCurveSetting>();
+            stateSettings = new List<StateSetting>();
+        }
+
+
         public void ResetDistance(float minDistance, float maxDistance)
         {
-            _minDistance = minDistance;
-            _maxDistance = maxDistance;
+            this.minDistance = minDistance;
+            this.maxDistance = maxDistance;
         }
     }
 
-    public enum AttenuationCurveType
+    [Flags]
+    internal enum AEComponentDataOverrideType
+    {
+        OutputMixerGroup = 0b0001,
+        Effect = 0b0010,
+        Attenuation = 0b0100,
+        OtherSetting = 0b1000
+    }
+
+    internal enum AttenuationCurveType
     {
         OutputVolume,
         SpatialBlend,
@@ -136,7 +161,7 @@ namespace ypzxAudioEditor.Utility
     }
 
     [Serializable]
-    public class AttenuationCurveSetting
+    internal class AttenuationCurveSetting
     {
         public AttenuationCurveType attenuationCurveType;
         public AnimationCurve curveData;
@@ -177,7 +202,7 @@ namespace ypzxAudioEditor.Utility
         }
     }
 
-    public enum GameParameterTargetType
+    internal enum GameParameterTargetType
     {
         Volume,
         Pitch,
@@ -185,19 +210,19 @@ namespace ypzxAudioEditor.Utility
     }
 
     [Serializable]
-    public class GameParameterCurveSetting
+    internal class GameParameterCurveSetting
     {
         public GameParameterTargetType targetType;
-        public int gameParameterID;
+        public int gameParameterId;
         public AnimationCurve curveData;
         public float yAxisMax;
         public float yAxisMin;
 
-        public GameParameterCurveSetting(GameParameterTargetType targetType)
+        public GameParameterCurveSetting(GameParameterTargetType targetType, int gameParameterId)
         {
             this.targetType = targetType;
-            gameParameterID = -1;
-            curveData = AnimationCurve.Linear(0,0,1,1);
+            this.gameParameterId = gameParameterId;
+            curveData = AnimationCurve.Linear(0, 0, 1, 1);
             switch (targetType)
             {
                 case GameParameterTargetType.Volume:
@@ -221,7 +246,7 @@ namespace ypzxAudioEditor.Utility
     }
 
     [System.Serializable]
-    public class StateSetting
+    internal class StateSetting
     {
         public int stateGroupId;
         public List<float> volumeList;

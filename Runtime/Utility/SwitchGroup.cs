@@ -1,15 +1,16 @@
-﻿using System.Collections;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using UnityEngine;
 
-namespace ypzxAudioEditor.Utility
+namespace AudioEditor.Runtime.Utility
 {
     [System.Serializable]
-    public class SwitchGroup : AEGameSyncs
+    internal class SwitchGroup : AEGameSyncs
     {
         public int currentSwitchID;
         [SerializeField]
         private List<Switch> switchList;
+
+        public int SwitchListCount => switchList.Count;
 
         public SwitchGroup(string name, int id) : base(name, id)
         {
@@ -29,17 +30,17 @@ namespace ypzxAudioEditor.Utility
             return switchList[SwitchListCount - 1];
         }
 
-        public Switch FindSwitch(int switchID)
+        public Switch GetSwitch(int switchID)
         {
             return switchList.Find((x) => x.id == switchID);
         }
 
-        public Switch FindSwitchAt(int index)
+        public Switch GetSwitchAt(int index)
         {
             return switchList[index];
         }
 
-        public int FindSwitchIndex(int switchID)
+        public int GetSwitchIndex(int switchID)
         {
             return switchList.FindIndex(x => x.id == switchID);
         }
@@ -79,8 +80,6 @@ namespace ypzxAudioEditor.Utility
 
         // public Switch this[int i] => switchList[i];
 
-        public int SwitchListCount => switchList.Count;
-
         // public List<Switch> SwitchList
         // {
         //     get => switchList;
@@ -88,7 +87,7 @@ namespace ypzxAudioEditor.Utility
     }
 
     [System.Serializable]
-    public class Switch : AEGameSyncs
+    internal class Switch : AEGameSyncs
     {
         public Switch(string name, int id) : base(name, id)
         {

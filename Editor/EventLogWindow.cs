@@ -1,32 +1,31 @@
-﻿using System;
-using System.Collections;
+﻿using AudioEditor.Runtime;
+using AudioEditor.Runtime.Utility;
+using System;
 using System.Collections.Generic;
 using UnityEditor;
-using UnityEditor.Graphs;
 using UnityEditor.IMGUI.Controls;
 using UnityEngine;
-using ypzxAudioEditor.Utility;
 
-namespace ypzxAudioEditor
+namespace AudioEditor.Editor
 {
 
-    public class EventLogWindow : EditorWindow
+    internal class EventLogWindow : EditorWindow
     {
         //private static EventLogWindow window;
-        private static List<string> _eventLogList = new List<string>();
-        private static string _searchString = "";
-        private SearchField _searchField;
-        private Rect _scrollViewPosition = Rect.zero;
-        private Rect _scrollViewRect = Rect.zero;
-        private Vector2 _scrollPosition = Vector2.zero;
-        private float _actuallyScrollViewHeight = 0f;
-        private static bool _prepareToDownPage = false;
-        private float _boxHeight = 0f;
+        private static List<string> eventLogList = new List<string>();
+        private static string searchString = "";
+        private SearchField searchField;
+        private Rect scrollViewPosition = Rect.zero;
+        private Rect scrollViewRect = Rect.zero;
+        private Vector2 scrollPosition = Vector2.zero;
+        private float actuallyScrollViewHeight = 0f;
+        private static bool prepareToDownPage = false;
+        private float boxHeight = 0f;
 
-        [MenuItem("Window/Audio Editor/EventLog",false,12)]
+        [MenuItem("Window/Audio Editor/EventLog", false, 12)]
         public static EventLogWindow GetWindow()
         {
-            var window =  (EventLogWindow)GetWindow(typeof(EventLogWindow),false,"AudioEditor EventLog");
+            var window = (EventLogWindow)GetWindow(typeof(EventLogWindow), false, "AudioEditor EventLog");
             return window;
         }
 
@@ -42,10 +41,10 @@ namespace ypzxAudioEditor
             AudioEditorManager.EventUnitTriggered += OnEventActionTriggered;
             AudioEditorManager.PlayableGenerated += OnPlayableGenerated;
             AudioEditorManager.PlayableDestroyed += OnPlayableDestroyed;
-            _eventLogList = new List<string>();
-            _searchField = new SearchField();
-            _searchString = "";
-            _prepareToDownPage = false;
+            eventLogList = new List<string>();
+            searchField = new SearchField();
+            searchString = "";
+            prepareToDownPage = false;
         }
 
         void OnGUI()
@@ -59,60 +58,60 @@ namespace ypzxAudioEditor
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("Clear", EditorStyles.toolbarButton, GUILayout.ExpandWidth(false)))
             {
-                _eventLogList.Clear();
+                eventLogList.Clear();
             }
             GUILayout.FlexibleSpace();
-            if (_searchField == null) _searchField = new SearchField();
-            _searchString = _searchField.OnToolbarGUI(_searchString);
+            if (searchField == null) searchField = new SearchField();
+            searchString = searchField.OnToolbarGUI(searchString);
             GUILayout.EndHorizontal();
             var rect = EditorGUILayout.GetControlRect(false, 1);
             EditorGUI.DrawRect(rect, Color.gray);
-            
+
             GUILayout.Space(EditorGUIUtility.standardVerticalSpacing);
-            
+
             List<string> tempLogList;
-            if (_searchString != "")
+            if (searchString != "")
             {
-                tempLogList  = _eventLogList.FindAll(x => x.IndexOf(_searchString,StringComparison.OrdinalIgnoreCase)>0);
+                tempLogList = eventLogList.FindAll(x => x.IndexOf(searchString, StringComparison.OrdinalIgnoreCase) > 0);
             }
             else
             {
-                tempLogList = _eventLogList;
+                tempLogList = eventLogList;
             }
             if (Event.current.type == EventType.Layout)
             {
-                _actuallyScrollViewHeight = Math.Abs(_scrollViewPosition.height);
-                _scrollViewRect.width = _scrollViewPosition.width-GUI.skin.verticalScrollbar.fixedWidth;
-                _scrollViewRect.height = (_boxHeight + EditorGUIUtility.standardVerticalSpacing * 2) * tempLogList.Count;
+                actuallyScrollViewHeight = Math.Abs(scrollViewPosition.height);
+                scrollViewRect.width = scrollViewPosition.width - GUI.skin.verticalScrollbar.fixedWidth;
+                scrollViewRect.height = (boxHeight + EditorGUIUtility.standardVerticalSpacing * 2) * tempLogList.Count;
             }
 
             GUI.SetNextControlName("EventLog Background Area");
-            _scrollViewPosition = EditorGUILayout.GetControlRect(true,GUILayout.ExpandHeight(true));
-            _scrollPosition = GUI.BeginScrollView(_scrollViewPosition,_scrollPosition,_scrollViewRect);
-            GUILayout.BeginArea(_scrollViewRect);
+            scrollViewPosition = EditorGUILayout.GetControlRect(true, GUILayout.ExpandHeight(true));
+            scrollPosition = GUI.BeginScrollView(scrollViewPosition, scrollPosition, scrollViewRect);
+            GUILayout.BeginArea(scrollViewRect);
             for (int i = 0; i < tempLogList.Count; i++)
             {
                 using (new GUILayout.HorizontalScope("box"))
                 {
                     EditorGUILayout.LabelField(tempLogList[i]);
                 }
-            
-                if (Event.current.type == EventType.Repaint && i ==tempLogList.Count-1)
+
+                if (Event.current.type == EventType.Repaint && i == tempLogList.Count - 1)
                 {
-                    _boxHeight = GUILayoutUtility.GetLastRect().height;
+                    boxHeight = GUILayoutUtility.GetLastRect().height;
                 }
             }
             GUILayout.EndArea();
-            
+
             GUI.EndScrollView();
-            
-            if (_prepareToDownPage == true)
+
+            if (prepareToDownPage == true)
             {
-                _scrollPosition.y = _scrollViewRect.height - _actuallyScrollViewHeight;
-                _prepareToDownPage = false;
+                scrollPosition.y = scrollViewRect.height - actuallyScrollViewHeight;
+                prepareToDownPage = false;
             }
 
-            if (_scrollViewPosition.Contains(Event.current.mousePosition) && Event.current.type == EventType.MouseDown)
+            if (scrollViewPosition.Contains(Event.current.mousePosition) && Event.current.type == EventType.MouseDown)
             {
                 GUI.FocusControl("EventLog Background Area");
             }
@@ -122,17 +121,17 @@ namespace ypzxAudioEditor
         {
             if (obj == PlayModeStateChange.EnteredPlayMode)
             {
-                _eventLogList.Clear();
+                eventLogList.Clear();
             }
         }
 
-        private void OnEventTriggered(AEEvent applyEvent,GameObject eventAttachObject)
+        private void OnEventTriggered(AEEvent applyEvent, GameObject eventAttachObject)
         {
             var gameObjectName = eventAttachObject != null ? eventAttachObject.name : "null";
-            _eventLogList.Add($"[{System.DateTime.Now.ToLongTimeString()}]事件触发，name：{applyEvent.name}，id：{applyEvent.id}，GameObject：{gameObjectName}");
-            if (Math.Abs(Math.Abs(Mathf.Abs(_scrollPosition.y - _scrollViewRect.height)) - _actuallyScrollViewHeight) < 1 || (_scrollPosition.y ==0 && _scrollViewRect.height<_actuallyScrollViewHeight))
+            eventLogList.Add($"[{System.DateTime.Now.ToLongTimeString()}]事件触发，name：{applyEvent.name}，id：{applyEvent.id}，GameObject：{gameObjectName}");
+            if (Math.Abs(Math.Abs(Mathf.Abs(scrollPosition.y - scrollViewRect.height)) - actuallyScrollViewHeight) < 1 || (scrollPosition.y == 0 && scrollViewRect.height < actuallyScrollViewHeight))
             {
-                _prepareToDownPage = true;
+                prepareToDownPage = true;
             }
             Repaint();
         }
@@ -141,10 +140,10 @@ namespace ypzxAudioEditor
         {
             var overrideTag = isOverride ? "(覆盖动作)" : "";
             var gameObjectName = eventAttachObject != null ? eventAttachObject.name : "null";
-            _eventLogList.Add($"[{System.DateTime.Now.ToLongTimeString()}]  执行动作：{eventType}{overrideTag}，[ 对象：{targetName}，id：{targetId}，GameObejct:{gameObjectName} ]");
-            if (Math.Abs(Math.Abs(Mathf.Abs(_scrollPosition.y - _scrollViewRect.height)) - _actuallyScrollViewHeight) < 1 || (_scrollPosition.y == 0 && _scrollViewRect.height < _actuallyScrollViewHeight))
+            eventLogList.Add($"[{System.DateTime.Now.ToLongTimeString()}]  执行动作：{eventType}{overrideTag}，[ 对象：{targetName}，id：{targetId}，GameObejct:{gameObjectName} ]");
+            if (Math.Abs(Math.Abs(Mathf.Abs(scrollPosition.y - scrollViewRect.height)) - actuallyScrollViewHeight) < 1 || (scrollPosition.y == 0 && scrollViewRect.height < actuallyScrollViewHeight))
             {
-                _prepareToDownPage = true;
+                prepareToDownPage = true;
             }
             Repaint();
         }
@@ -154,10 +153,10 @@ namespace ypzxAudioEditor
         private void OnPlayableGenerated(string playableName, int playableId, GameObject gameObject)
         {
             var gameObjectName = gameObject != null ? gameObject.name : "null";
-            _eventLogList.Add($"[{System.DateTime.Now.ToLongTimeString()}]      生成实例：{playableName}，Id：{playableId}，GameObject：{gameObjectName}");
-            if (Math.Abs(Math.Abs(Mathf.Abs(_scrollPosition.y - _scrollViewRect.height)) - _actuallyScrollViewHeight) < 1 || (_scrollPosition.y == 0 && _scrollViewRect.height < _actuallyScrollViewHeight))
+            eventLogList.Add($"[{System.DateTime.Now.ToLongTimeString()}]      生成实例：{playableName}，Id：{playableId}，GameObject：{gameObjectName}");
+            if (Math.Abs(Math.Abs(Mathf.Abs(scrollPosition.y - scrollViewRect.height)) - actuallyScrollViewHeight) < 1 || (scrollPosition.y == 0 && scrollViewRect.height < actuallyScrollViewHeight))
             {
-                _prepareToDownPage = true;
+                prepareToDownPage = true;
             }
             Repaint();
         }
@@ -165,17 +164,17 @@ namespace ypzxAudioEditor
         private void OnPlayableDestroyed(string playableName, int playableId, GameObject gameObject)
         {
             var gameObjectName = gameObject != null ? gameObject.name : "null";
-            _eventLogList.Add($"[{System.DateTime.Now.ToLongTimeString()}]      实例结束播放，销毁实例：{playableName}，Id：{playableId}，GameObject：{gameObjectName}");
-            if (Math.Abs(Math.Abs(Mathf.Abs(_scrollPosition.y - _scrollViewRect.height)) - _actuallyScrollViewHeight) < 1 || (_scrollPosition.y == 0 && _scrollViewRect.height < _actuallyScrollViewHeight))
+            eventLogList.Add($"[{System.DateTime.Now.ToLongTimeString()}]      实例结束播放，销毁实例：{playableName}，Id：{playableId}，GameObject：{gameObjectName}");
+            if (Math.Abs(Math.Abs(Mathf.Abs(scrollPosition.y - scrollViewRect.height)) - actuallyScrollViewHeight) < 1 || (scrollPosition.y == 0 && scrollViewRect.height < actuallyScrollViewHeight))
             {
-                _prepareToDownPage = true;
+                prepareToDownPage = true;
             }
             Repaint();
         }
 
         public static void ShowLog(string info)
         {
-            if(_eventLogList!= null) _eventLogList.Add($"[{System.DateTime.Now.ToLongTimeString()}] {info}");
+            if (eventLogList != null) eventLogList.Add($"[{System.DateTime.Now.ToLongTimeString()}] {info}");
         }
 
         void OnDestroy()
@@ -186,8 +185,8 @@ namespace ypzxAudioEditor
             AudioEditorManager.PlayableGenerated -= OnPlayableGenerated;
             AudioEditorManager.PlayableDestroyed -= OnPlayableDestroyed;
 
-            _searchString = null;
-            _eventLogList.Clear();
+            searchString = null;
+            eventLogList.Clear();
         }
     }
 }

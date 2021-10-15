@@ -1,55 +1,42 @@
 ﻿using System;
-using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Audio;
 using UnityEngine.Playables;
 
-namespace ypzxAudioEditor.Utility
+namespace AudioEditor.Runtime.Utility
 {
-    public class SwitchContainerPlayable : AudioEditorPlayable
+    internal class SwitchContainerPlayable : AudioEditorPlayable
     {
         private ScriptPlayable<SwitchContainerPlayableBehaviour> switchContainerScriptPlayable;
-        private List<AudioEditorPlayable> childrenPlayable;
-        //  private AudioEditorManager manager;
+        private readonly List<AudioEditorPlayable> childrenPlayable;
+        private readonly GameObject eventAttachObject;
 
-        /// <summary>
-        /// key = SwitchID,value = ChildrenPlayableID
-        /// </summary>
-        private Dictionary<int, int> switchAndChildrenPlayableComparisonTable;
+        public override AEAudioComponent Data => switchContainerScriptPlayable.GetBehaviour()?.Data;
+        public override AudioEditorPlayableBehaviour PlayableBehaviour => switchContainerScriptPlayable.GetBehaviour();
+        protected override AudioMixerPlayable MixerPlayable
+        {
+            get
+            {
+                if (switchContainerScriptPlayable.GetBehaviour() == null)
+                {
+                    AudioEditorDebugLog.LogWarning("Playable is null");
+                    return default;
+                }
+                return switchContainerScriptPlayable.GetBehaviour().mixerPlayable;
+            }
+        }
 
         public SwitchContainerPlayable(SwitchContainer data, PlayableGraph graph, GameObject eventAttachObject, AudioSource audioSource, List<AudioEditorPlayable> childrenPlayable, bool isChild) : base(data.name, data.id, data.unitType, ref graph)
         {
             this.childrenPlayable = childrenPlayable;
-            //  this.manager = manager;
+            this.eventAttachObject = eventAttachObject;
 
-            switchContainerScriptPlayable = ScriptPlayable<SwitchContainerPlayableBehaviour>.Create(m_Graph);
-            switchContainerScriptPlayable.GetBehaviour().SetData(data, isChild, childrenPlayable);
+            var switchContainerScriptPlayableBehaviour = new SwitchContainerPlayableBehaviour(data, childrenPlayable);
+            switchContainerScriptPlayable = ScriptPlayable<SwitchContainerPlayableBehaviour>.Create(base.graph, switchContainerScriptPlayableBehaviour);
 
-            MixerPlayable = AudioMixerPlayable.Create(m_Graph);
-            switchContainerScriptPlayable.AddInput(MixerPlayable, 0, 1);
-            MixerPlayable = AddChildrenPlayableToMixer(MixerPlayable, childrenPlayable);
+            Init();
 
-            Init(switchContainerScriptPlayable, eventAttachObject, audioSource);
-
-            //检查及初始化相关联的SwitchGroup
-            var switchGroup = AudioEditorManager.GetAEComponentDataByID<SwitchGroup>(data.switchGroupID) as SwitchGroup;
-            if (switchGroup == null)
-            {
-                Debug.LogError("您生成了一个没有设置SwitchGroup的SwitchContainer实例，请检查");
-                switchContainerScriptPlayable.SetDone(true);
-                return;
-            }
-            switchAndChildrenPlayableComparisonTable = new Dictionary<int, int>();
-            for (int i = 0; i < data.outputIDList.Count; i++)
-            {
-                switchAndChildrenPlayableComparisonTable.Add(switchGroup.FindSwitchAt(i).id, data.outputIDList[i]);
-            }
-            if (switchGroup.currentSwitchID != -1)
-            {
-                SyncSwitchChanged(data.switchGroupID, switchGroup.currentSwitchID);
-                switchContainerScriptPlayable.GetBehaviour().Init();
-            }
             AudioEditorManager.SwitchGroupSelectChanged += SyncSwitchChanged;
 
         }
@@ -59,7 +46,6 @@ namespace ypzxAudioEditor.Utility
         {
             return switchContainerScriptPlayable;
         }
-
 
         public override bool IsDone()
         {
@@ -74,27 +60,38 @@ namespace ypzxAudioEditor.Utility
             return false;
         }
 
-        public override void Replay()
-        {
-            switchContainerScriptPlayable.GetBehaviour().Init();
-            switchContainerScriptPlayable.SetDone(false);
-            switchContainerScriptPlayable.Play();
-            base.Replay();
-        }
+        //public override void Replay()
+        //{
+        //    base.Replay();
+        //    switchContainerScriptPlayable.GetBehaviour().Init();
+        //}
 
-        protected override void SetScriptPlayableSpeed(double value)
+        public override void GetPlayState(out double playTime, out double durationTime, out bool isTheLastTimePlay)
         {
-            switchContainerScriptPlayable.SetSpeed(value);
-        }
+            isTheLastTimePlay = false;
+            var playingIndex = switchContainerScriptPlayable.GetBehaviour().PlayingIndex;
+            if (playingIndex < 0 && playingIndex >= childrenPlayable.Count)
+            {
+                playTime = durationTime = 0;
+                return;
+            }
 
-        protected override void SetScriptPlayableWeight(float newValue)
-        {
-            switchContainerScriptPlayable.SetInputWeight(MixerPlayable, newValue);
-        }
+            childrenPlayable[playingIndex].GetPlayState(out playTime, out durationTime, out var childLastPlay);
 
-        public override void GetTheLastTimePlayState(ref double playTime, ref double durationTime)
-        {
-            switchContainerScriptPlayable.GetBehaviour().GetTheLastTimePlayStateAsChild(ref playTime, ref durationTime);
+            if (childLastPlay)
+            {
+                if (Data.loop)
+                {
+                    if (Data.loopInfinite == false && PlayableBehaviour.CompletedLoopIndex == Data.loopTimes - 1)
+                    {
+                        isTheLastTimePlay = true;
+                    }
+                }
+                else
+                {
+                    isTheLastTimePlay = true;
+                }
+            }
         }
 
         public override void GetAudioClips(ref List<AudioClip> clips)
@@ -105,10 +102,10 @@ namespace ypzxAudioEditor.Utility
             }
         }
 
-        public override void Stop()
-        {
-            switchContainerScriptPlayable.SetDone(true);
-        }
+        //public override void Stop()
+        //{
+        //    switchContainerScriptPlayable.SetDone(true);
+        //}
 
         public override void Destroy()
         {
@@ -117,179 +114,191 @@ namespace ypzxAudioEditor.Utility
             {
                 childrenPlayable[i].Destroy();
             }
-            m_Graph.DestroySubgraph(switchContainerScriptPlayable);
-            if (playableOutput.IsOutputValid())
-            {
-                playableOutput.SetTarget(null);
-                playableOutput.SetUserData(null);
-                //m_Graph.DestroyOutput(playableOutput);
-                m_Graph.Stop();
-                m_Graph.Destroy();
-            }
-            AudioEditorManager.SwitchGroupSelectChanged -= SyncSwitchChanged;
-            //Debug.Log("Destroy SwitchContainerPlayable In Graph");
-        }
 
-        public void SyncSwitchChanged(int swichGroupID, int switchID)
-        {
-            //var data = AudioEditorManager.GetAEComponentDataByID<AEAudioComponent>(id) as SwitchContainer;
-            if ((Data as SwitchContainer).switchGroupID == swichGroupID)
+            if (switchContainerScriptPlayable.CanDestroy())
             {
-                if (switchAndChildrenPlayableComparisonTable.TryGetValue(switchID, out var childPlayableID))
-                {
-                    switchContainerScriptPlayable.GetBehaviour().nextPlayIndex = childrenPlayable.FindIndex(x => x.id == childPlayableID);
-                }
-                // Debug.Log(switchID);
+                graph.DestroySubgraph(switchContainerScriptPlayable);
             }
-            //Debug.Log("switch change");
+
+            AudioEditorManager.SwitchGroupSelectChanged -= SyncSwitchChanged;
         }
 
         public override bool Relate(int id)
         {
             if (base.Relate(id)) return true;
-            if (childrenPlayable.FindIndex(x => x.id == id) >= 0) return true;
+            if (childrenPlayable.FindIndex(x => x.Relate(id)) >= 0) return true;
             return false;
         }
 
-        protected override AudioEditorPlayableBehaviour PlayableBehaviour => switchContainerScriptPlayable.GetBehaviour();
-
-        protected sealed override AudioMixerPlayable MixerPlayable
+        /// <summary>
+        /// 响应Event中SetSwitch的操作
+        /// </summary>
+        /// <param name="switchGroup">相关的SwitchGroup</param>
+        /// <param name="scope">范围</param>
+        /// <param name="gameObject">事件触发的GameObject</param>
+        public void SyncSwitchChanged(SwitchGroup switchGroup, AEEventScope scope, GameObject gameObject)
         {
-            get => switchContainerScriptPlayable.GetBehaviour().mixerPlayable;
-            set => switchContainerScriptPlayable.GetBehaviour().mixerPlayable = value;
+            if ((Data as SwitchContainer).switchGroupID == switchGroup.id)
+            {
+                if ((scope == AEEventScope.GameObject && eventAttachObject == gameObject) || scope == AEEventScope.Global)
+                {
+                    switchContainerScriptPlayable.GetBehaviour().nextPlayIndex = switchGroup.GetSwitchIndex(switchGroup.currentSwitchID);
+                    if ((Data as SwitchContainer).PlayMode == ContainerPlayMode.Continuous)
+                    {
+                        switchContainerScriptPlayable.GetBehaviour().ToNextPlay();
+                    }
+                }
+            }
         }
 
-        public override AEAudioComponent Data => switchContainerScriptPlayable.GetBehaviour().data;
         public class SwitchContainerPlayableBehaviour : AudioEditorPlayableBehaviour
         {
-            public int playingIndex;
+            protected int playingIndex;
             public int nextPlayIndex = -1;
-            public SwitchContainer data;
-            public List<AudioEditorPlayable> childrenPlayable;
+            private readonly SwitchContainer data;
+            protected List<AudioEditorPlayable> childrenPlayable;
 
-            public override void Init()
+            public override AEAudioComponent Data { get => data; }
+            public int PlayingIndex => playingIndex;
+
+            public SwitchContainerPlayableBehaviour()
             {
-                base.Init();
-                if (data.switchGroupID == -1 || data.outputIDList.Count == 0)
+
+            }
+
+            public SwitchContainerPlayableBehaviour(SwitchContainer data, List<AudioEditorPlayable> childrenPlayables)
+            {
+                this.data = data;
+                this.childrenPlayable = childrenPlayables;
+                //loopIndex = data.loopTimes;
+            }
+
+
+            public override void OnPlayableCreate(Playable playable)
+            {
+                var graph = playable.GetGraph();
+                mixerPlayable = AudioMixerPlayable.Create(graph);
+                playable.AddInput(mixerPlayable, 0, 1);
+                AddChildrenPlayableToMixer(ref mixerPlayable, childrenPlayable);
+
+                base.OnPlayableCreate(playable);
+            }
+
+            public override void Init(bool initLoop = true, bool initDelay = true)
+            {
+                base.Init(initLoop, initDelay);
+
+                //检查及初始化相关联的SwitchGroup
+                var switchGroup = AudioEditorManager.GetAEComponentDataByID<SwitchGroup>(data.switchGroupID);
+                if (switchGroup == null)
                 {
-                    mixerPlayable.SetDone(true);
+                    AudioEditorDebugLog.LogError("您生成了一个没有设置SwitchGroup的SwitchContainer实例，请检查");
+                    instance.SetDone(true);
+                    return;
                 }
+
+                if (data.outputIDList.Count == 0)
+                {
+                    instance.SetDone(true);
+                    return;
+                }
+
+                nextPlayIndex = switchGroup.GetSwitchIndex(switchGroup.currentSwitchID);
+
                 if (nextPlayIndex == -1)
                 {
-                    nextPlayIndex = data.defualtPlayIndex;
-                }
-                playingIndex = nextPlayIndex;
-                mixerPlayable.SetTime(0f);
-                for (int i = 0; i < mixerPlayable.GetInputCount(); i++)
-                {
-                    mixerPlayable.SetInputWeight(i, i == playingIndex ? 1f : 0f);
-
-                    if (i != playingIndex)
+                    if (data.defualtPlayIndex < 0 || data.defualtPlayIndex >= data.outputIDList.Count)
                     {
-                        childrenPlayable[i].Pause();
+                        nextPlayIndex = 0;
                     }
                     else
                     {
-                        childrenPlayable[playingIndex].Replay();
+                        nextPlayIndex = data.defualtPlayIndex;
                     }
                 }
-                canFadeIn = true;
-            }
+                playingIndex = nextPlayIndex;
 
-            public override void OnBehaviourPlay(Playable playable, FrameData info)
-            {
-                Init();
+                for (int i = 0; i < mixerPlayable.GetInputCount(); i++)
+                {
+                    if (i == playingIndex)
+                    {
+                        mixerPlayable.SetInputWeight(i, data.fadeIn ? 0f : 1f);
+
+                        childrenPlayable[i].PlayableBehaviour.onPlayableDone -= OnChildrenPlayablePlayDone;
+                        childrenPlayable[i].PlayableBehaviour.onPlayableDone += OnChildrenPlayablePlayDone;
+                        childrenPlayable[playingIndex].Replay();
+                    }
+                    else
+                    {
+                        mixerPlayable.SetInputWeight(i, 0f);
+
+                        childrenPlayable[i].PlayableBehaviour.onPlayableDone -= OnChildrenPlayablePlayDone;
+                        childrenPlayable[i].Pause();
+                    }
+
+                    //if (i != playingIndex)
+                    //{
+                    //    childrenPlayable[i].Pause();
+                    //}
+                    //else
+                    //{
+                    //    childrenPlayable[i].PlayableBehaviour.onPlayableDone -= OnChildrenPlayablePlayDone;
+                    //    childrenPlayable[i].PlayableBehaviour.onPlayableDone += OnChildrenPlayablePlayDone;
+                    //    childrenPlayable[playingIndex].Replay();
+                    //}
+                }
             }
 
             public override void PrepareFrame(Playable playable, FrameData info)
             {
                 base.PrepareFrame(playable, info);
+                if (mixerPlayable.IsValid() == false) return;
+
                 if (data.switchGroupID == -1 || data.outputIDList.Count == 0)
                 {
+                    playable.Pause();
                     playable.SetDone(true);
                     return;
                 }
-                CheckDelay();
-                CheckFadeIn(data, ref mixerPlayable, playingIndex, childrenPlayable[playingIndex].GetMixerTime());
 
-                if (data.loop)
+                if (data.PlayMode == ContainerPlayMode.Step && childrenPlayable[playingIndex].IsDone())
                 {
-                    if (!data.loopInfinite && loopIndex == 1)
-                    {
-                        double fadeOutTime = -1;
-                        double fadeOutDurationTime = -1;
-                        childrenPlayable[playingIndex].GetTheLastTimePlayState(ref fadeOutTime, ref fadeOutDurationTime);
-                        CheckFadeOut(data, ref mixerPlayable, playingIndex, fadeOutTime, fadeOutDurationTime);
-                    }
-                }
-                else
-                {
-                    double fadeOutTime = -1;
-                    double fadeOutDurationTime = -1;
-                    childrenPlayable[playingIndex].GetTheLastTimePlayState(ref fadeOutTime, ref fadeOutDurationTime);
-                    CheckFadeOut(data, ref mixerPlayable, playingIndex, fadeOutTime, fadeOutDurationTime);
+                    playable.Pause();
+                    playable.SetDone(true);
+                    return;
                 }
 
-                //检测是否有新的播放变动，同时进行循环次数上的调整
-                if (nextPlayIndex != playingIndex)
+                if (CheckDelay()) return;
+
+                CheckCommonFadeIn(data, playingIndex);
+
+                childrenPlayable[playingIndex].GetPlayState(out var fadeOutTime, out var fadeOutDurationTime, out var isTheLastTimePlay);
+                if (isTheLastTimePlay)
                 {
-                    switch (data.PlayMode)
-                    {
-                        case ContainerPlayMode.Step:
-                            if (childrenPlayable[playingIndex].IsDone())
-                            {
-                                if (data.loop)
-                                {
-                                    if (!data.loopInfinite)
-                                    {
-                                        if (loopIndex > 0)
-                                        {
-                                            loopIndex--;
-                                        }
-                                        if (loopIndex == 0)
-                                        {
-                                            return;
-                                        }
-                                    }
-                                    Init();
-                                }
-                            }
-                            return;
-                        case ContainerPlayMode.Continuous:
-                            if (data.loop && !data.loopInfinite)
-                            {
-                                loopIndex = data.loopTimes;
-                            }
-                            Init();
-                            return;
-                    }
+                    CheckCommonFadeOut(data, playingIndex, fadeOutTime, fadeOutDurationTime);
                 }
-                //如果没有新变动则根据循环次数循环播放同一个音频
-                if (childrenPlayable[playingIndex].IsDone())
-                {
-                    if (data.loop)
-                    {
-                        if (!data.loopInfinite)
-                        {
-                            if (loopIndex > 0)
-                            {
-                                loopIndex--;
-                            }
-                            if (loopIndex == 0)
-                            {
-                                return;
-                            }
-                        }
-                        childrenPlayable[playingIndex].Replay();
-                    }
-                }
+
+                ////检测是否有新的播放变动，同时进行循环次数上的调整
+                //if (nextPlayIndex != playingIndex)
+                //{
+                //    if (data.PlayMode == ContainerPlayMode.Continuous)
+                //    {
+                //        if (data.loop && !data.loopInfinite)
+                //        {
+                //            CompletedLoopIndex = 0;
+                //        }
+                //        Init(false,false);
+                //    }
+                //}
+
             }
+
             protected override bool CheckDelay()
             {
                 if (!base.CheckDelay()) return false;
                 if (canDelay)
                 {
-                    if (data.delayTime > 0 && mixerPlayable.GetTime() < data.delayTime)
+                    if (data.delayTime > 0 && instance.GetTime() < data.delayTime)
                     {
                         childrenPlayable[playingIndex].Pause();
                         return true;
@@ -302,28 +311,6 @@ namespace ypzxAudioEditor.Utility
                     }
                 }
                 return false;
-            }
-
-            public override void GetTheLastTimePlayStateAsChild(ref double playTime, ref double durationTime)
-            {
-                if (playingIndex == nextPlayIndex)
-                {
-                    if (data.loop)
-                    {
-                        if (loopIndex == 1)
-                        {
-                            childrenPlayable[playingIndex].GetTheLastTimePlayState(ref playTime, ref durationTime);
-                            return;
-                        }
-                    }
-                    else
-                    {
-                        childrenPlayable[playingIndex].GetTheLastTimePlayState(ref playTime, ref durationTime);
-                        return;
-                    }
-                }
-                //没到最后一次播放或者循环为无限时，返回-1
-                playTime = durationTime = -1;
             }
 
             public override bool JudgeDone()
@@ -339,22 +326,128 @@ namespace ypzxAudioEditor.Utility
                     {
                         return false;
                     }
-                    else if (loopIndex == 0)
-                    {
-                        return true;
-                    }
-                    return false;
                 }
                 return childrenPlayable[playingIndex].IsDone();
             }
 
-            public override void SetData(AEAudioComponent data, bool isChild, List<AudioEditorPlayable> childrenPlayables = null)
+            public void ToNextPlay()
             {
-                base.SetData(data, isChild, childrenPlayables);
-                this.data = data as SwitchContainer;
-                this.childrenPlayable = childrenPlayables;
-                loopIndex = data.loopTimes;
+                if (data.PlayMode != ContainerPlayMode.Continuous || PlayingIndex == nextPlayIndex)
+                {
+                    return;
+                }
+
+                var preIndex = playingIndex;
+                var nextIndex = nextPlayIndex;
+
+                if (data.crossFade && data.crossFadeTime > 0)
+                {
+                    switch (data.crossFadeType)
+                    {
+                        case CrossFadeType.Linear:
+
+                            //if (data.loop && !data.loopInfinite)
+                            //{
+                            //    CompletedLoopIndex = 0;
+                            //}
+                            base.Init(true, false);
+
+                            var playingChildPlayable = childrenPlayable[preIndex];
+
+                            playingChildPlayable.GetPlayState(out var playingChildPlayableTime,
+                                out var palyingChildPlayableDurationTime,
+                                out var palyingChildPlayableisTheLastTimePlay);
+                            if (playingChildPlayableTime >= 0 && palyingChildPlayableDurationTime > 0)
+                            {
+                                //CrossFadeTime自适应于前后播放的durantion/2以及基础设置三者中的最小值
+                                var crossFadeTime = (double)data.crossFadeTime;
+                                if (crossFadeTime > palyingChildPlayableDurationTime / 2f)
+                                    crossFadeTime = palyingChildPlayableDurationTime / 2f;
+
+                                childrenPlayable[nextIndex].GetPlayState(
+                                    out var nextChildPlayableTime, out var nextChildPlayableDurationTime,
+                                    out var nextChildPlayableisTheLastTimePlay);
+
+                                if (crossFadeTime > nextChildPlayableDurationTime / 2f)
+                                    crossFadeTime = nextChildPlayableDurationTime / 2;
+
+                                childrenPlayable[preIndex].PlayableBehaviour.onPlayableDone -= OnChildrenPlayablePlayDone;
+                                DoMixerInportTransition(preIndex, (float)crossFadeTime, mixerPlayable.GetInputWeight(preIndex), 0, completeFunc: () =>
+                                 {
+                                     childrenPlayable[preIndex].Pause();
+                                 });
+
+                                DoMixerInportTransition(nextIndex, (float)crossFadeTime, mixerPlayable.GetInputWeight(nextIndex), 1);
+                                childrenPlayable[nextIndex].PlayableBehaviour.onPlayableDone -= OnChildrenPlayablePlayDone;
+                                childrenPlayable[nextIndex].PlayableBehaviour.onPlayableDone += OnChildrenPlayablePlayDone;
+                                childrenPlayable[nextIndex].Replay();
+
+                                playingIndex = nextPlayIndex;
+                            }
+                            break;
+                        case CrossFadeType.Delay:
+                            base.Init(true, false);
+                            canFadeIn = false;
+
+                            mixerPlayable.SetInputWeight(preIndex, 0f);
+                            childrenPlayable[preIndex].PlayableBehaviour.onPlayableDone -= OnChildrenPlayablePlayDone;
+                            childrenPlayable[preIndex].Pause();
+
+                            TransitionAction.OnSilence(data.crossFadeTime, ref onMixerPlayableUpdate, () =>
+                            {
+                                canFadeIn = true;
+                                mixerPlayable.SetInputWeight(nextIndex, 1f);
+                                childrenPlayable[nextIndex].Replay();
+                                childrenPlayable[nextIndex].PlayableBehaviour.onPlayableDone -= OnChildrenPlayablePlayDone;
+                                childrenPlayable[nextIndex].PlayableBehaviour.onPlayableDone += OnChildrenPlayablePlayDone;
+                            });
+
+                            playingIndex = nextPlayIndex;
+                            break;
+                        default:
+                            throw new ArgumentOutOfRangeException();
+                    }
+                }
+                else
+                {
+                    Init(true, false);
+                }
             }
+
+            private void OnChildrenPlayablePlayDone(int childId)
+            {
+                //Debug.Log("switchContainer OnChildrenPlayablePlayDone");
+                childrenPlayable[playingIndex].PlayableBehaviour.onPlayableDone -= OnChildrenPlayablePlayDone;
+
+                if (data.loop)
+                {
+                    if (!data.loopInfinite)
+                    {
+                        if (CompletedLoopIndex < data.loopTimes)
+                        {
+                            CompletedLoopIndex++;
+                        }
+                        if (CompletedLoopIndex == data.loopTimes)
+                        {
+                            if (data.PlayMode != ContainerPlayMode.Continuous)
+                            {
+                                onPlayableDone?.Invoke(data.id);
+                            }
+                            return;
+                        }
+                    }
+                    Init(false, false);
+                }
+                else
+                {
+                    if (data.PlayMode != ContainerPlayMode.Continuous)
+                    {
+                        onPlayableDone?.Invoke(data.id);
+                    }
+                }
+
+            }
+
         }
     }
 }

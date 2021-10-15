@@ -1,14 +1,13 @@
-﻿using System.Collections;
-using System.Collections.Generic;
-using UnityEngine;
+﻿using AudioEditor.Runtime;
 using UnityEditor;
+using UnityEngine;
 
-namespace ypzxAudioEditor
+namespace AudioEditor.Editor
 {
     [CustomEditor(typeof(AudioEditorManager))]
-    public class AudioEditorManagerInspector : Editor
+    internal class AudioEditorManagerInspector : UnityEditor.Editor
     {
-       // private SerializedProperty m_data;
+        // private SerializedProperty m_data;
         private AudioEditorManager manager;
 
         private void OnEnable()
@@ -28,10 +27,10 @@ namespace ypzxAudioEditor
             // {
             //     AudioEditorManager.m_Graph.Play();
             // }
-                // EditorGUILayout.BeginHorizontal();
-                // EditorGUILayout.PrefixLabel(new GUIContent("当前生成的音频实例："));
-                // EditorGUILayout.LabelField(manager.PlayableList.Count.ToString());
-                // EditorGUILayout.EndHorizontal();
+            // EditorGUILayout.BeginHorizontal();
+            // EditorGUILayout.PrefixLabel(new GUIContent("当前生成的音频实例："));
+            // EditorGUILayout.LabelField(manager.PlayableList.Count.ToString());
+            // EditorGUILayout.EndHorizontal();
         }
 
     }
