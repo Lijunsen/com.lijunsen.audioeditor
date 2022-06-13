@@ -31,7 +31,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Added
 
 - 在AudioComponent的3DSetting页面，新增优先级随距离衰减的功能。
-- 新增缓存池缓冲已创建的GameObject，减少性能消耗。AudioEditorManager新增**ClearCached**方法清除缓存。
+- 新增缓存池缓冲已创建的GameObject，减少性能消耗。AudioEditorManager新增`ClearCached`方法清除缓存。
 
 ### Changed
 
@@ -52,9 +52,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Added
 
 - 新增ProjectSetting中的performanceLevel选项，数值越高，越强调质量，每帧处理的音频组件内容会减少。
-- 新增了AudioEditorManager的**RegisterAudioListener**的API，用于手动向插件注册AudioListener以完成3D相关功能。
+- 新增了AudioEditorManager的`RegisterAudioListener`的API，用于手动向插件注册AudioListener以完成3D相关功能。
 - 新增AEGameObjectComponent组件，用于记录Switch和GameParameter的局部值数据。
-- EventRefecrence中**PostEvent**新增triggerObject参数，triggerObject和TargetObject的概念进一步区分，事件由TriggerObject触发，动作作用于TargetObject。
+- EventRefecrence中`PostEvent`新增triggerObject参数，triggerObject和TargetObject的概念进一步区分，事件由TriggerObject触发，动作作用于TargetObject。
 
 - 新增VirtualGameObjectGroup和VirtualGameObject组件。
 
