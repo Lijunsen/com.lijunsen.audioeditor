@@ -2,7 +2,7 @@
 
 AudioEditor是一套基于Unity的多功能音频编辑的一站式轻量化解决方案，致力于提供丰富的音频功能，满足项目多样化的音频需求，以及丰富系统中的音频表现，提升视听整体有机度，为玩家提供音画联动、身临其境的沉浸式体验。
 
-<img src="https://github.com/Lijunsen/com.lijunsen.audioeditor/main/Res/封面.png" style="zoom: 67%;" />
+<img src="Res/封面.png" style="zoom: 67%;" />
 
 
 
@@ -18,15 +18,15 @@ AudioEditor是一套基于Unity的多功能音频编辑的一站式轻量化解�
 
 1. 由于1.2.3版本起引用了Unity官方包`Editor Coroutines`，在**Unity 2021.3LTS**版本下新建项目会默认附带此包，而在此之前的版本，请确保工程内具备`Editor Coroutines`包（通过Package Manager中的Unity Registry页面寻找`Editor Coroutines`包安装）。
 
-   <img src="E:\Git\com.lijunsen.audioeditor\Res\20220617145530.png" style="zoom:67%;" />
+   <img src="Res/20220617145530.png" style="zoom:67%;" />
 
 2. 复制Git链接。
 
-   ![](E:\Git\com.lijunsen.audioeditor\20220617154225.png)
+   ![](Res/20220617154225.png)
 
 3. 在项目工程的Package Manager中，点击左上角的“+”按钮，选择“Add Package from git URL”，粘贴链接，等待安装完毕。
 
-   ![](E:\Git\com.lijunsen.audioeditor\20220617154709.png)
+   ![](Res/20220617154709.png)
 
 4. 完成！阅读使用文档，进行内容部署吧。
 
