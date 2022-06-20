@@ -3,7 +3,7 @@
   "displayName": "AudioEditor",
   "version": "1.2.3",
   "unity": "2019.4",
-  "description": "\u897f\u5c71\u5c45\u5185\u90e8\u5f00\u53d1\u7684\u97f3\u9891\u63d2\u4ef6",
+  "description": "AudioEditor是一套基于Unity的多功能音频编辑的一站式轻量化解决方案，致力于提供丰富的音频功能，满足项目多样化的音频需求，以及丰富系统中的音频表现，提升视听整体有机度，为玩家提供音画联动、身临其境的沉浸式体验。",
   "keywords": [
     "Audio",
     "Audio Editor"
