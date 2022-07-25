@@ -12,6 +12,12 @@ AudioEditor是一套基于Unity的多功能音频编辑的一站式轻量化解�
 
 
 
+## 版本要求
+
+Unity版本最低要求2019.4LTS，推荐版本为2020LTS及后续版本。
+
+
+
 ## 通过Unity Package Manager安装
 
 **符合Unity自定义包标准**。无需本地包，可通过此仓库在Unity Package Manager中远程安装及快速部署。
