@@ -1,0 +1,13 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" editor-extension-mode="True">
+    <Style src="/Assets/AudioEditor/Editor/EditorFontStyle.uss" />
+    <uie:Toolbar tabindex="1" focusable="false" style="flex-direction: row; justify-content: flex-start; flex-shrink: 0;">
+        <ui:IMGUIContainer name="EventLogTab" style="flex-shrink: 0;" />
+        <uie:ToolbarSpacer tabindex="3" style="flex-basis: auto; flex-shrink: 1; flex-grow: 1; flex-direction: row;" />
+        <uie:ToolbarSearchField focusable="true" style="flex-shrink: 1; width: 200px;" />
+        <uie:ToolbarButton text="Clear" display-tooltip-when-elided="true" name="ClearButton" style="flex-shrink: 0;" />
+    </uie:Toolbar>
+    <ui:VisualElement name="EventInfoPage" style="flex-grow: 1; display: flex;">
+        <ui:ScrollView />
+        <ui:Button text="Bottom" display-tooltip-when-elided="false" name="ScrollToEdgeButton" style="position: absolute; right: 20px; bottom: 20px; width: 50px; height: 50px;" />
+    </ui:VisualElement>
+</ui:UXML>

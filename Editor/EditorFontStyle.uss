@@ -1,0 +1,10 @@
+#LinkLabel {
+    -unity-font-style: bold;
+    -unity-text-align: middle-left;
+    cursor: link;
+    color: rgba(16, 71, 140, 255);
+}
+
+.EventLogLabel {
+    font-size: 14px;
+}
